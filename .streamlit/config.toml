@@ -3,3 +3,34 @@ toolbarMode = "minimal"
 
 [browser]
 gatherUsageStats = false
+
+# Design tokens mirror dashboard_style.THEMES (see handoff.md, stage 2.5).
+# Defining both [theme.light] and [theme.dark] lets the app follow the device setting.
+[theme]
+font = "Heebo:https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700&display=swap, sans-serif"
+headingFont = "Heebo, sans-serif"
+headingFontWeights = [700, 700, 600, 600, 600, 600]
+baseRadius = "0.6rem"
+showWidgetBorder = true
+
+[theme.light]
+primaryColor = "#C8102E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F6F6F7"
+textColor = "#1F2328"
+borderColor = "#E5E7EB"
+linkColor = "#A50D26"
+
+[theme.light.sidebar]
+backgroundColor = "#F6F6F7"
+
+[theme.dark]
+primaryColor = "#E5484D"
+backgroundColor = "#111318"
+secondaryBackgroundColor = "#181B21"
+textColor = "#F0F1F3"
+borderColor = "#2A2E36"
+linkColor = "#F87171"
+
+[theme.dark.sidebar]
+backgroundColor = "#181B21"

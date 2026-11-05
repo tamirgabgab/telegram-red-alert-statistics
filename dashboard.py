@@ -11,47 +11,42 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import dashboard_data as dd
+import dashboard_style as ds
 from alerts_parser import ALERT_TYPE_LABELS
 from build_dataset import load_alerts
 
 st.set_page_config(page_title="סטטיסטיקת התרעות", page_icon="🔴", layout="wide")
 
+# ?dev=1 shows maintainer hints (collection commands). End users never see shell commands.
+DEV = st.query_params.get("dev") == "1"
+
 # --------------------------------------------------------------------------------------
-# Theme tokens (light / dark are each selected, not flipped). Categorical slots are assigned
-# to alert types in a fixed order so a type keeps its color whatever the filter.
+# Theme: tokens live in dashboard_style.py. Light / dark are each selected, not flipped.
+# Each alert type keeps its own color whatever the filter.
 # --------------------------------------------------------------------------------------
-THEMES = {
-    "light": {
-        "surface": "#fcfcfb", "ink": "#0b0b0b", "ink2": "#52514e", "muted": "#898781",
-        "grid": "#e1e0d9", "axis": "#c3c2b7",
-        "series": ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6"],
-        "seq": ["#f4f8fd", "#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"],
-    },
-    "dark": {
-        "surface": "#1a1a19", "ink": "#f0efec", "ink2": "#c3c2b7", "muted": "#898781",
-        "grid": "#2c2c2a", "axis": "#383835",
-        "series": ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9"],
-        "seq": ["#1f2226", "#104281", "#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4", "#cde2fb"],
-    },
-}
 TYPE_ORDER = list(ALERT_TYPE_LABELS.keys())  # rocket, uav, infiltration, early_warning, ...
-FONT = 'system-ui, -apple-system, "Segoe UI", Arial, sans-serif'
+FONT = ds.FONT
 PLOTLY_CONFIG = {"displaylogo": False, "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"]}
 
 
 def current_theme():
     try:
-        return THEMES["dark" if st.context.theme.type == "dark" else "light"]
+        return ds.THEMES["dark" if st.context.theme.type == "dark" else "light"]
     except Exception:  # older Streamlit / no theme info
-        return THEMES["light"]
+        return ds.THEMES["light"]
 
 
 T = current_theme()
 
 
 def type_color(alert_type):
-    idx = TYPE_ORDER.index(alert_type) if alert_type in TYPE_ORDER else len(T["series"]) - 1
-    return T["series"][min(idx, len(T["series"]) - 1)]
+    return ds.type_color(T, alert_type)
+
+
+def single_color(frame):
+    """Color for a one-series chart: the type's own color when one type is shown, else the brand red."""
+    present = frame["alert_type"].unique()
+    return type_color(present[0]) if len(present) == 1 else T["brand"]
 
 
 def seq_scale():
@@ -62,11 +57,11 @@ def seq_scale():
 def style(fig, height=380, legend=True):
     fig.update_layout(
         height=height,
-        margin=dict(l=8, r=8, t=36, b=8),
-        paper_bgcolor=T["surface"], plot_bgcolor=T["surface"],
+        margin=dict(l=14, r=16, t=44, b=12),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",  # the card behind it carries the surface
         font=dict(family=FONT, color=T["ink2"], size=13),
-        title=dict(x=0.99, xanchor="right", font=dict(color=T["ink"], size=15)),  # RTL: title on the right
-        hoverlabel=dict(font_family=FONT, bgcolor=T["surface"], font_color=T["ink"], bordercolor=T["axis"]),
+        title=dict(xref="paper", x=1, xanchor="right", font=dict(color=T["ink"], size=15)),  # RTL: title on the right
+        hoverlabel=dict(font_family=FONT, bgcolor=T["card"], font_color=T["ink"], bordercolor=T["axis"]),
         showlegend=legend,
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, title_text=""),
         bargap=0.15,
@@ -83,24 +78,9 @@ def show(fig):
 
 
 # --------------------------------------------------------------------------------------
-# RTL layout. Charts and tables stay LTR (time runs left to right).
+# Global CSS (RTL on content only; charts and tables stay LTR because time runs left to right).
 # --------------------------------------------------------------------------------------
-st.markdown(
-    """
-    <style>
-      /* RTL only on content; the app shell (sidebar drawer, header) stays LTR so it collapses correctly */
-      [data-testid="stMain"], [data-testid="stSidebarUserContent"] { direction: rtl; text-align: right; }
-      [data-testid="stPlotlyChart"], [data-testid="stPlotlyChart"] *,
-      [data-testid="stDataFrame"] { direction: ltr !important; text-align: initial; }
-      /* The date field breaks when mirrored: keep it LTR */
-      [data-testid="stDateInput"] > div, [data-testid="stDateInput"] > div * { direction: ltr; }
-      [data-testid="stButtonGroup"] { direction: ltr; justify-content: flex-end; }
-      [data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; }
-      .block-container { padding-top: 2rem; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown(ds.global_css(T), unsafe_allow_html=True)
 
 
 @st.cache_data(show_spinner="טוען נתונים...")
@@ -111,10 +91,15 @@ def get_alerts():
     return df
 
 
+TITLE = "סטטיסטיקת התרעות"
+SUBTITLE = "נתוני התרעות פיקוד העורף מערוץ הטלגרם \"צופר - צבע אדום\""
+
 alerts = get_alerts()
 if alerts.empty:
-    st.title("סטטיסטיקת התרעות פיקוד העורף")
-    st.warning("אין עדיין נתונים. הריצו `python collect_alerts.py --since 2026-02-26` כדי לאסוף הודעות מהערוץ.")
+    st.markdown(ds.hero_html(TITLE, SUBTITLE, []), unsafe_allow_html=True)
+    st.info("עדיין אין נתוני התרעות להצגה. הנתונים יופיעו כאן אחרי העדכון הבא.")
+    if DEV:
+        st.caption("לאיסוף: `python collect_alerts.py --since 2026-02-26`")
     st.stop()
 
 data_min = alerts["timestamp"].min().date()
@@ -172,8 +157,9 @@ with st.sidebar:
     st.caption(f"נתונים: {data_min:%d/%m/%Y} – {data_max:%d/%m/%Y} · {len(alerts):,} רשומות")
     sources = alerts["source"].value_counts()
     if "telegram" not in sources:
-        st.caption("כרגע יש רק נתוני צבע אדום מקובץ האקסל הישן. "
-                   "לאיסוף כל סוגי ההתרעות: `python collect_alerts.py --since 2026-02-26`")
+        st.caption("בשלב זה מוצגים נתוני צבע אדום בלבד. סוגי התרעות נוספים יתווספו בעדכון הבא.")
+        if DEV:
+            st.caption("לאיסוף כל סוגי ההתרעות: `python collect_alerts.py --since 2026-02-26`")
 
 df = dd.filter_alerts(alerts, start, end, types, zones, cities)
 unit = "התרעות ביישובים" if mode == dd.MODE_LOCALITIES else "אירועי התרעה"
@@ -181,13 +167,17 @@ unit = "התרעות ביישובים" if mode == dd.MODE_LOCALITIES else "אי�
 # --------------------------------------------------------------------------------------
 # Header + KPIs
 # --------------------------------------------------------------------------------------
-st.title("סטטיסטיקת התרעות פיקוד העורף")
 scope = "כל הארץ"
 if cities:
     scope = ", ".join(cities[:3]) + (f" ועוד {len(cities) - 3}" if len(cities) > 3 else "")
 elif zones:
     scope = ", ".join(zones[:3]) + (f" ועוד {len(zones) - 3}" if len(zones) > 3 else "")
-st.caption(f"{scope} · {start:%d/%m/%Y} – {end:%d/%m/%Y} · מקור: ערוץ הטלגרם \"צופר - צבע אדום\"")
+data_until = alerts["timestamp"].max()
+st.markdown(ds.hero_html(TITLE, SUBTITLE, [
+    (scope, "plain"),
+    (f"{start:%d/%m/%Y} – {end:%d/%m/%Y}", "ltr"),
+    (f"הנתונים מעודכנים עד {data_until:%d/%m/%Y %H:%M}", "status"),
+]), unsafe_allow_html=True)
 
 if df.empty:
     st.info("אין התרעות שמתאימות לסינון הזה. אפשר להרחיב את טווח התאריכים או להסיר חלק מהאזורים והיישובים.")
@@ -215,7 +205,7 @@ def stacked_bars(wide, x_title, height=380, hover_x="%{x}"):
     gap = 1.5 if len(wide.columns) > 1 and len(wide) <= 200 else 0
     for t in [t for t in TYPE_ORDER if t in wide.columns]:
         fig.add_bar(x=wide.index, y=wide[t], name=dd.type_label(t), marker_color=type_color(t),
-                    marker_line_width=gap, marker_line_color=T["surface"],
+                    marker_line_width=gap, marker_line_color=T["card"],
                     hovertemplate=f"{hover_x}<br>{dd.type_label(t)}: %{{y:,}}<extra></extra>")
     fig.update_layout(barmode="stack", barcornerradius=4)
     style(fig, height=height, legend=len(wide.columns) > 1)
@@ -308,7 +298,7 @@ with tab_places:
         with col:
             top = dd.top_counts(df, level, n_top, mode)
             fig = go.Figure(go.Bar(
-                x=top.values, y=top.index, orientation="h", marker_color=T["series"][0], marker_line_width=0,
+                x=top.values, y=top.index, orientation="h", marker_color=single_color(df), marker_line_width=0,
                 text=[f"{v:,}" for v in top.values], textposition="outside", cliponaxis=False,
                 textfont=dict(color=T["ink2"], size=11),
                 hovertemplate="%{y}<br>%{x:,}<extra></extra>"))
@@ -324,13 +314,15 @@ with tab_places:
 with tab_shelter:
     sd = dd.shelter_distribution(df)
     if sd.empty:
-        st.info("אין עדיין נתוני זמן התגוננות. הם נאספים רק בהודעות שנשמרו ב-`collect_alerts.py`, "
-                "כי קובץ האקסל הישן לא שמר אותם. כדי להשלים: `python collect_alerts.py --since 2026-02-26`")
+        st.info("נתוני זמן ההתגוננות יופיעו אחרי העדכון הבא של הנתונים. "
+                "המקור הנוכחי (ארכיון ישן של הערוץ) לא שמר אותם.")
+        if DEV:
+            st.caption("כדי להשלים: `python collect_alerts.py --since 2026-02-26`")
     else:
         def fmt(sec):
             return "מיידי" if sec == 0 else (f"{sec} שניות" if sec < 60 else
                                              ("דקה" if sec == 60 else ("דקה וחצי" if sec == 90 else f"{sec // 60} דקות")))
-        fig = go.Figure(go.Bar(x=[fmt(s) for s in sd.index], y=sd.values, marker_color=T["series"][0],
+        fig = go.Figure(go.Bar(x=[fmt(s) for s in sd.index], y=sd.values, marker_color=single_color(df),
                                marker_line_width=0, hovertemplate="%{x}<br>%{y:,} התרעות ביישובים<extra></extra>"))
         fig.update_layout(barcornerradius=4, title_text="התרעות לפי זמן ההתגוננות של היישוב")
         style(fig, legend=False)
