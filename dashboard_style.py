@@ -102,6 +102,15 @@ def global_css(t):
   /* Selection bar: the main controls, right under the header */
   .st-key-filterbar {{ padding: 4px 0 2px; }}
   .st-key-reset_top button {{ color: var(--ra-brand-strong); }}
+  /* Facts list (records): label / value / detail in a hairline grid, no boxes */
+  .ra-facts {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 28px; margin: 4px 0 8px; }}
+  .ra-fact {{ border-top: 1px solid var(--ra-border); padding: 12px 0 10px; min-width: 0; }}
+  .ra-fact__label {{ font-size: 0.8rem; color: var(--ra-muted); line-height: 1.4; }}
+  .ra-fact__value {{
+    font-family: var(--ra-display); font-size: 1.3rem; font-weight: 600; color: var(--ra-ink); line-height: 1.3;
+    margin: 4px 0 2px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+  }}
+  .ra-fact__sub {{ font-size: 0.8rem; color: var(--ra-ink2); line-height: 1.45; }}
   .ra-rule {{ border: 0; border-top: 1px solid var(--ra-border); margin: 28px 0 4px; }}
   .ra-group-title {{
     font-family: var(--ra-display); font-size: 1.35rem; font-weight: 600; color: var(--ra-ink); margin: 8px 0 0;
@@ -426,3 +435,23 @@ def feed_html(barrages, color_of, label_of):
         items.append(f'<li><div class="ra-feed__time"><bdi dir="ltr">{when}</bdi>{span}</div>'
                      f'<div class="ra-feed__where">{where}<small>{n}</small></div>{tag}</li>')
     return f'<ul class="ra-feed" aria-label="מטחים אחרונים">{"".join(items)}</ul>'
+
+
+def facts_html(items, label="שיאים"):
+    """A hairline grid of plain facts. items: dicts with label, value, optional sub and ltr."""
+    out = []
+    for c in items:
+        value = escape(str(c["value"]))
+        if c.get("ltr"):
+            value = f'<bdi dir="ltr">{value}</bdi>'
+        sub = f'<div class="ra-fact__sub">{escape(c["sub"])}</div>' if c.get("sub") else ""
+        out.append(f'<div class="ra-fact"><div class="ra-fact__label">{escape(c["label"])}</div>'
+                   f'<div class="ra-fact__value">{value}</div>{sub}</div>')
+    return f'<section class="ra-facts" aria-label="{escape(label)}">{"".join(out)}</section>'
+
+
+def with_alpha(hex_color, alpha):
+    """'#RRGGBB' -> 'rgba(r,g,b,a)' for translucent fills."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"

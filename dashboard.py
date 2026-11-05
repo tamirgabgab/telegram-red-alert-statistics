@@ -9,6 +9,7 @@ from datetime import timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
 import dashboard_data as dd
@@ -74,11 +75,12 @@ def style(fig, height=380, legend=True):
     return fig
 
 
-def show(fig, title=None, subtitle="", note=None):
-    """A chart block: short title and subtitle above, the figure, and a uniform source line below."""
+def show(fig, title=None, subtitle="", note=None, fixed_width=False):
+    """A chart block: short title and subtitle above, the figure, and a uniform source line below.
+    fixed_width keeps the figure's own width (e.g. a calendar with square cells) instead of stretching it."""
     if title:
         st.markdown(ds.chart_head_html(title, subtitle), unsafe_allow_html=True)
-    st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG, theme=None)
+    st.plotly_chart(fig, width="content" if fixed_width else "stretch", config=PLOTLY_CONFIG, theme=None)
     foot = f"מקור: ערוץ הטלגרם צופר - צבע אדום. עודכן {SOURCE_UPDATED}."
     st.markdown(ds.chart_foot_html(foot + (f" {note}" if note else "")), unsafe_allow_html=True)
 
@@ -254,6 +256,8 @@ tab_days = tab_shelter = tab_hours  # "times" holds hours, the day x hour grid a
 
 
 def tab_is_open(tab):
+    if os.getenv("DASHBOARD_ALL_TABS") == "1":  # tests: build every lazy tab
+        return True
     is_open = getattr(tab, "open", None)
     return True if is_open is None else bool(is_open)
 
@@ -293,6 +297,50 @@ with tab_time:
                            font=dict(color=T["ink"], size=12), arrowcolor=T["axis"])
     eff_name = next(k for k, v in dd.RESOLUTIONS.items() if v == eff)
     show(fig, f"{unit} לאורך זמן", f"לפי {eff_name}, {start:%d/%m/%Y} עד {end:%d/%m/%Y}")
+
+    # Records: plain facts about the current selection
+    rec = dd.records(df, mode, start, end)
+    facts = []
+    day, n = rec["busiest_day"]
+    facts.append({"label": "היום העמוס ביותר", "value": f"{day:%d/%m/%Y}", "ltr": True, "sub": f"{n:,} {unit}"})
+    hour, n = rec["busiest_hour"]
+    facts.append({"label": "השעה העמוסה ביותר", "value": f"{hour:%d/%m/%Y %H}:00", "ltr": True, "sub": f"{n:,} {unit}"})
+    ts_max, n = rec["largest_minute"]
+    if n > 1:
+        facts.append({"label": "הכי הרבה יישובים בדקה אחת", "value": f"{n:,} יישובים",
+                      "sub": f"ב-{ts_max:%d/%m/%Y} בשעה {ts_max:%H:%M}"})
+    if "worst_zone_day" in rec:
+        zone, day, n = rec["worst_zone_day"]
+        facts.append({"label": "האזור עם הכי הרבה התרעות ביום אחד", "value": zone,
+                      "sub": f"{n:,} {unit} ב-{day:%d/%m/%Y}"})
+    q, q_from, q_to = rec["longest_quiet"]
+    facts.append({"label": "הרצף הארוך ביותר של ימים בלי התרעות",
+                  "value": "אין ימים שקטים" if q == 0 else ("יום אחד" if q == 1 else f"{q} ימים"),
+                  "sub": "בכל יום בתקופה הייתה לפחות התרעה אחת" if q == 0 else f"{q_from:%d/%m} עד {q_to:%d/%m/%Y}"})
+    st.markdown(ds.chart_head_html("שיאים", "לפי התקופה, הסוגים והמקומות שנבחרו"), unsafe_allow_html=True)
+    st.markdown(ds.facts_html(facts), unsafe_allow_html=True)
+
+    # Calendar: one square per day, weeks as columns
+    cal = dd.calendar_matrix(df, mode, start, end)
+    dates = [[(w + timedelta(days=i)).strftime("%d/%m/%Y") for w in cal.columns] for i in range(7)]
+    fig = go.Figure(go.Heatmap(
+        z=cal.values, x=[f"{w:%d/%m}" for w in cal.columns], y=cal.index, customdata=dates,
+        colorscale=seq_scale(), xgap=3, ygap=3, hoverongaps=False,
+        hovertemplate="%{customdata}, יום %{y}<br>" + unit + ": %{z:,}<extra></extra>",
+        colorbar=dict(thickness=8, len=0.9, outlinewidth=0, tickfont=dict(color=T["muted"]))))
+    n_weeks = cal.shape[1]
+    cell = 30 if n_weeks <= 20 else 18
+    fixed = n_weeks * cell <= 880  # short ranges: square cells at a fixed size; long ranges: fill the width
+    style(fig, height=7 * cell + 70, legend=False)
+    fig.update_layout(margin=dict(l=8, r=8, t=34, b=8))
+    if fixed:
+        fig.update_layout(width=n_weeks * cell + 150)
+    step = 1 if cell >= 30 else 2
+    fig.update_yaxes(autorange="reversed", type="category", ticksuffix="  ", showgrid=False)
+    fig.update_xaxes(type="category", side="top", showgrid=False, tickangle=0,
+                     tickvals=list(range(0, n_weeks, step)),
+                     ticktext=[f"{w:%d/%m}" for w in cal.columns][::step])
+    show(fig, "לוח שנה", f"{unit} בכל יום. עמודה היא שבוע שמתחיל ביום ראשון", fixed_width=fixed)
 
 # --- Recent barrages -----------------------------------------------------------------
 with tab_recent:
@@ -538,6 +586,34 @@ with tab_map:
 
 # --- Hours of day ---------------------------------------------------------------------
 with tab_hours:
+    per_locality = len(cities) == 1 and not zones
+    gs = dd.gap_stats(df, per_locality)
+    between = f"בין התרעות ב{cities[0]}" if per_locality else "בין מטחים"
+    night = dd.night_share(df, mode)
+    st.markdown(ds.chart_head_html("מרווחים בין התרעות",
+                                   f"{between} בבחירה הנוכחית" + ("" if per_locality else
+                                   f". מטח: התרעות מאותו סוג בהפרש של עד {dd.BARRAGE_GAP_MIN} דקות")),
+                unsafe_allow_html=True)
+    longest_sub = (f"התחילה ב-{gs['longest_from']:%d/%m/%Y} בשעה {gs['longest_from']:%H:%M}"
+                   if gs["longest"] is not None else "צריך לפחות שתי התרעות")
+    st.markdown(ds.kpi_row_html([
+        {"label": "מרווח חציוני", "value": dd.format_duration(gs["median"]),
+         "sub": "חצי מהמרווחים קצרים מזה"},
+        {"label": "ההפסקה הארוכה ביותר", "value": dd.format_duration(gs["longest"]), "sub": longest_sub},
+        {"label": "בלילה", "value": f"{round((night or 0) * 100)}%", "ltr": True,
+         "sub": "בין 22:00 ל-06:00"},
+        {"label": "התרעות בפועל" if per_locality else "מטחים", "value": f"{gs['moments']:,}",
+         "sub": "דקות עם התרעה ביישוב" if per_locality else "בבחירה הנוכחית"},
+    ]), unsafe_allow_html=True)
+    if len(gs["gaps"]):
+        hist = dd.gap_histogram(gs["gaps"])
+        fig = go.Figure(go.Bar(x=list(hist.index), y=hist.values, marker_color=single_color(df), marker_line_width=0,
+                               hovertemplate="%{x}<br>%{y:,} מרווחים<extra></extra>"))
+        fig.update_layout(barcornerradius=4)
+        style(fig, height=300, legend=False)
+        fig.update_xaxes(type="category")
+        show(fig, "כמה זמן עובר עד ההתרעה הבאה", f"מספר המרווחים {between} לפי משך")
+
     hod = dd.hour_of_day(df, mode)
     fig = stacked_bars(hod, "שעה ביום", hover_x="%{x}:00")
     fig.update_xaxes(tickmode="array", tickvals=list(range(0, 24, 2)), ticktext=[f"{h:02d}" for h in range(0, 24, 2)])
@@ -601,26 +677,80 @@ def select_place(level):
 
 
 with tab_places:
-    n_top = st.segmented_control("כמה להציג", [10, 20, 30, 50], default=20, key="ntop") or 20
-    st.caption("לחיצה על שורה מסננת את כל הדשבורד לאותו אזור או יישוב.")
-    left, right = st.columns(2)
-    for col, level, title in ((left, "zone", "אזורים"), (right, "city", "יישובים")):
-        with col:
-            top = dd.top_counts(df, level, n_top, mode)
-            st.session_state[f"_top_{level}_names"] = list(top.index)
-            table = pd.DataFrame({"rank": range(1, len(top) + 1), "name": top.index, "count": top.values})
-            count_label = unit if level == "zone" or mode == dd.MODE_BARRAGES else "התרעות ביישוב"
-            st.markdown(ds.chart_head_html(f"{title} עם הכי הרבה התרעות", count_label), unsafe_allow_html=True)
-            st.dataframe(
-                table, hide_index=True, key=f"top_{level}", on_select=lambda lv=level: select_place(lv),
-                selection_mode="single-row", height=35 * len(table) + 38,
-                column_order=["count", "name", "rank"],  # LTR grid: the rank ends up on the right
-                column_config={
-                    "rank": st.column_config.NumberColumn("#", width="small"),
-                    "name": st.column_config.TextColumn("אזור" if level == "zone" else "יישוב"),
-                    "count": st.column_config.ProgressColumn(
-                        count_label, format="localized", min_value=0, max_value=int(top.max()) if len(top) else 1),
-                })
+    if tab_is_open(tab_places):
+        st.caption("לחיצה על שורה מסננת את כל הדשבורד לאותו אזור או יישוב.")
+        zt = dd.zone_table(df, mode, start, end)
+        st.session_state["_top_zone_names"] = list(zt["zone"])
+        zview = pd.DataFrame({
+            "daily": zt["daily"], "top_type": zt["top_type"].map(dd.type_label),
+            "median_gap": zt["median_gap"].map(dd.format_duration), "night": zt["night_share"] * 100,
+            "localities": zt["localities"], "total": zt["total"], "zone": zt["zone"],
+        })
+        st.markdown(ds.chart_head_html("השוואת אזורים", f"{unit} בכל אזור, מהגבוה לנמוך"), unsafe_allow_html=True)
+        st.dataframe(
+            zview, hide_index=True, key="top_zone", on_select=lambda: select_place("zone"),
+            selection_mode="single-row", height=min(560, 35 * len(zview) + 38),
+            column_order=["daily", "top_type", "median_gap", "night", "localities", "total", "zone"],  # LTR grid
+            column_config={
+                "zone": st.column_config.TextColumn("אזור"),
+                "total": st.column_config.ProgressColumn(unit, format="localized", min_value=0,
+                                                         max_value=int(zt["total"].max()) if len(zt) else 1),
+                "localities": st.column_config.NumberColumn("יישובים", help="יישובים שקיבלו התרעה באזור"),
+                "night": st.column_config.NumberColumn("בלילה", format="%.0f%%", help="אחוז ההתרעות בין 22:00 ל-06:00"),
+                "median_gap": st.column_config.TextColumn(
+                    "מרווח חציוני", help=f"הזמן החציוני בין מטחים באזור (מטח: התרעות מאותו סוג בהפרש של עד "
+                                         f"{dd.BARRAGE_GAP_MIN} דקות)"),
+                "top_type": st.column_config.TextColumn("סוג נפוץ"),
+                "daily": st.column_config.LineChartColumn("מגמה יומית", y_min=0),
+            })
+        st.markdown(ds.chart_foot_html(f"מקור: ערוץ הטלגרם צופר - צבע אדום. עודכן {SOURCE_UPDATED}."),
+                    unsafe_allow_html=True)
+
+        # Small multiples: the busiest zones on one shared time axis, read right to left like the table
+        top = zt.head(12)
+        if len(top) > 1:
+            n_cols = 4 if len(top) > 6 else 3
+            n_rows = -(-len(top) // n_cols)
+            days = pd.date_range(pd.Timestamp(start), pd.Timestamp(end), freq="1D")
+            # RTL: the busiest zone at the top right. Titles are given in plotly's row-major, left-to-right order.
+            cell = {idx: (idx // n_cols + 1, n_cols - idx % n_cols) for idx in top.index}
+            titles = [" "] * (n_rows * n_cols)
+            for idx, row in top.iterrows():
+                r, c = cell[idx]
+                titles[(r - 1) * n_cols + (c - 1)] = f"<b>{row['zone']}</b>  {row['total']:,}"
+            fig = make_subplots(rows=n_rows, cols=n_cols, shared_xaxes=True, shared_yaxes=True,
+                                horizontal_spacing=0.03, vertical_spacing=0.14, subplot_titles=titles)
+            color = single_color(df)
+            for idx, row in top.iterrows():
+                r, c = cell[idx]
+                fig.add_trace(go.Scatter(
+                    x=days, y=row["daily"], mode="lines", line=dict(color=color, width=1.6), fill="tozeroy",
+                    fillcolor=ds.with_alpha(color, 0.14), name=row["zone"],
+                    hovertemplate=f"{row['zone']}<br>%{{x|%d/%m/%Y}}: %{{y:,}}<extra></extra>"), row=r, col=c)
+            style(fig, height=150 * n_rows + 40, legend=False)
+            fig.update_layout(margin=dict(l=8, r=8, t=36, b=8))
+            fig.update_annotations(font=dict(size=12, color=T["ink"]))
+            fig.update_xaxes(showticklabels=True, tickformat="%d/%m", nticks=4)
+            fig.update_yaxes(rangemode="tozero", nticks=3)
+            show(fig, "מגמה לפי אזור", f"{unit} ביום ב-{len(top)} האזורים עם הכי הרבה התרעות, על אותו ציר")
+
+        top_city = dd.top_counts(df, "city", 20, mode)
+        st.session_state["_top_city_names"] = list(top_city.index)
+        city_label = unit if mode == dd.MODE_BARRAGES else "התרעות ביישוב"
+        ctable = pd.DataFrame({"rank": range(1, len(top_city) + 1), "name": top_city.index,
+                               "zone": [CITY_ZONE.get(c, "") for c in top_city.index], "count": top_city.values})
+        st.markdown(ds.chart_head_html("יישובים עם הכי הרבה התרעות", city_label), unsafe_allow_html=True)
+        st.dataframe(
+            ctable, hide_index=True, key="top_city", on_select=lambda: select_place("city"),
+            selection_mode="single-row", height=35 * len(ctable) + 38,
+            column_order=["count", "zone", "name", "rank"],  # LTR grid: the rank ends up on the right
+            column_config={
+                "rank": st.column_config.NumberColumn("#", width="small"),
+                "name": st.column_config.TextColumn("יישוב"),
+                "zone": st.column_config.TextColumn("אזור"),
+                "count": st.column_config.ProgressColumn(
+                    city_label, format="localized", min_value=0, max_value=int(top_city.max()) if len(top_city) else 1),
+            })
 
 # --- Shelter time ---------------------------------------------------------------------
 with tab_shelter:
@@ -653,5 +783,19 @@ with tab_data:
                  column_config={"זמן": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
     st.download_button("הורדת הנתונים המסוננים (CSV)", view.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"alerts_{start:%Y%m%d}_{end:%Y%m%d}.csv", mime="text/csv")
+
+with st.expander("איך חישבנו"):
+    st.markdown(
+        f"""
+- **המקור היחיד** הוא הודעות ערוץ הטלגרם "צופר - צבע אדום": איזה יישוב, באיזו דקה ואיזה סוג התרעה.
+- **התרעות ביישובים**: כל יישוב שהופעלה בו התרעה נספר פעם אחת בכל דקה. יישוב שהופיע פעמיים באותה דקה נספר פעם אחת.
+- **אירועים**: כל דקה וסוג התרעה נספרים פעם אחת, לא משנה בכמה יישובים.
+- **מטחים**: התרעות מאותו סוג בהפרש של עד {dd.BARRAGE_GAP_MIN} דקות נספרות כמטח אחד, ולכן מטח יכול להימשך יותר מ-{dd.BARRAGE_GAP_MIN} דקות.
+- **לילה**: 22:00 עד 06:00. כל הזמנים בשעון ישראל.
+- **מרווחים**: כשנבחר יישוב אחד, המרווח נמדד בין דקות ההתרעה שלו. אחרת הוא נמדד בין מטחים.
+- **לא נספרות** הודעות "סיום אירוע".
+- **התרעה ביישוב איננה רקטה**, ואזור התרעה איננו נקודת פגיעה. התרעה אחת יכולה להפעיל עשרות יישובים.
+- **הנתונים נכונים** עד {SOURCE_UPDATED}.
+""")
 
 st.markdown(ds.footer_html(data_until), unsafe_allow_html=True)

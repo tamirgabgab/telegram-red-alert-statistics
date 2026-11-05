@@ -132,3 +132,61 @@ def test_filter_places_is_an_or_of_zones_and_cities():
     both = dd.filter_places(df, zones=["עוטף עזה"], cities=["חולון"])
     assert len(both) == 4  # three Gaza-envelope rows + Holon
     assert dd.city_zones(df)["זרעית"] == "קו העימות"
+
+
+def test_night_share_and_gaps():
+    df = make_df()
+    # night = 22:00-06:00: only the 23:10 Holon alert
+    assert dd.night_share(df) == 1 / 6
+    stats = dd.gap_stats(df)  # barrages: 14/06 12:55 rocket, 17/06 12:53-12:56 uav, 20/06 23:10 rocket
+    assert stats["moments"] == 3
+    assert stats["longest"] == pd.Timestamp("2026-06-20 23:10") - pd.Timestamp("2026-06-17 12:56")
+    assert stats["longest_from"] == pd.Timestamp("2026-06-17 12:56")
+    zar = dd.gap_stats(dd.filter_places(df, cities=["זרעית"]), per_locality=True)
+    assert zar["moments"] == 2 and zar["median"] == pd.Timedelta(minutes=3)
+    assert dd.gap_stats(df.iloc[0:1])["median"] is None
+
+
+def test_format_duration():
+    assert dd.format_duration(pd.Timedelta(seconds=20)) == "פחות מדקה"
+    assert dd.format_duration(pd.Timedelta(minutes=3)) == "3 דקות"
+    assert dd.format_duration(pd.Timedelta(hours=1)) == "שעה"
+    assert dd.format_duration(pd.Timedelta(hours=5, minutes=30)) == "5.5 שעות"
+    assert dd.format_duration(pd.Timedelta(days=3, hours=12)) == "3.5 ימים"
+    assert dd.format_duration(None) == "-"
+
+
+def test_records():
+    df = make_df()
+    r = dd.records(df, start=date(2026, 6, 13), end=date(2026, 6, 21))
+    assert r["busiest_day"] == (pd.Timestamp("2026-06-14"), 3)
+    assert r["largest_minute"] == (pd.Timestamp("2026-06-14 12:55"), 3)
+    assert r["worst_zone_day"][0] == "עוטף עזה" and r["worst_zone_day"][2] == 3
+    # quiet days: 13 | 15,16 | 18,19 | 21 -> longest run is 2 days, first one 15-16/06
+    assert r["longest_quiet"] == (2, pd.Timestamp("2026-06-15"), pd.Timestamp("2026-06-16"))
+    assert dd.records(df.iloc[0:0]) == {}
+
+
+def test_calendar_matrix_weeks_by_weekday():
+    df = make_df()
+    m = dd.calendar_matrix(df, start=date(2026, 6, 14), end=date(2026, 6, 20))
+    assert list(m.index) == ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"]
+    assert m.shape == (7, 1)  # 14/06/2026 is a Sunday: one full week
+    assert m.loc["ראשון"].iloc[0] == 3 and m.loc["שבת"].iloc[0] == 1
+
+
+def test_zone_table():
+    df = make_df()
+    t = dd.zone_table(df, start=date(2026, 6, 14), end=date(2026, 6, 20))
+    assert list(t["zone"])[0] == "עוטף עזה" and t.loc[0, "total"] == 3 and t.loc[0, "localities"] == 3
+    assert len(t.loc[0, "daily"]) == 7
+    holon = t[t["zone"] == "דן"].iloc[0]
+    assert holon["night_share"] == 1.0 and holon["median_gap"] is None
+
+
+def test_gap_histogram_bins():
+    g = pd.Series(pd.to_timedelta([3, 3, 20, 200, 3000], unit="min"))
+    h = dd.gap_histogram(g)
+    assert h["עד 5 דקות"] == 2 and h["15–30 דקות"] == 1 and h["3–6 שעות"] == 1 and h["יותר מיממה"] == 1
+    assert int(h.sum()) == 5 and list(h.index)[0] == "עד 5 דקות"
+    assert int(dd.gap_histogram(pd.Series(dtype="timedelta64[ns]")).sum()) == 0

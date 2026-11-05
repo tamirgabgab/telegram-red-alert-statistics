@@ -13,11 +13,11 @@ const { chromium } = require('playwright');
 const url = process.argv[2] || 'http://localhost:8501';
 const outDir = process.argv[3] || path.join(process.cwd(), 'screenshots');
 const CASES = [
-  ['desktop-light', { width: 1280, height: 900 }, 'light'],
-  ['desktop-dark', { width: 1280, height: 900 }, 'dark'],
-  // Streamlit scrolls inside its own container on narrow screens, so a tall viewport stands in for fullPage.
-  ['mobile-light', { width: 375, height: 2200 }, 'light'],
-  ['mobile-dark', { width: 375, height: 2200 }, 'dark'],
+  // Streamlit scrolls inside its own container, so a tall viewport stands in for fullPage.
+  ['desktop-light', { width: 1280, height: 3200 }, 'light'],
+  ['desktop-dark', { width: 1280, height: 3200 }, 'dark'],
+  ['mobile-light', { width: 375, height: 3600 }, 'light'],
+  ['mobile-dark', { width: 375, height: 3600 }, 'dark'],
 ];
 
 (async () => {
