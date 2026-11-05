@@ -3,6 +3,7 @@ import sys
 from datetime import date
 
 import pandas as pd
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -125,3 +126,30 @@ def test_counts_by_locality_barrages():
     b = md.counts_by_locality(dfg, MODE_BARRAGES, ["rocket", "uav"])
     assert b.loc["סעד"].tolist() == [1, 2]  # one rocket barrage; two separate UAV alerts
     assert md.counts_by_locality(dfg, MODE_LOCALITIES, ["rocket"]).loc["סעד", "rocket"] == 2
+
+
+def _localities():
+    return pd.DataFrame({"lat": [29.5, 33.3, 32.0, 31.5], "lng": [34.9, 35.6, 34.8, 34.5]},
+                        index=["אילת", "מטולה", "תל אביב", "שדרות"])
+
+
+def test_dot_projection_fits_frame_and_keeps_north_up():
+    loc = _localities()
+    proj = md.dot_projection(loc["lat"], loc["lng"])
+    x, y = md.project(loc["lat"], loc["lng"], proj)
+    x0, y0, x1, y1 = md.DOT_FRAME
+    assert (x >= x0 - 0.1).all() and (x <= x1 + 0.1).all()
+    assert (y >= y0 - 0.1).all() and (y <= y1 + 0.1).all()
+    assert y[1] < y[2] < y[0]          # Metula north of Tel Aviv north of Eilat
+    assert x[3] < x[1]                 # Sderot west of Metula
+    assert y.max() - y.min() == pytest.approx(y1 - y0, abs=0.2)  # the long side fills the frame
+
+
+def test_dot_levels_buckets_by_count_and_skips_unknown_and_zero():
+    loc = _localities()
+    proj = md.dot_projection(loc["lat"], loc["lng"])
+    counts = pd.Series({"שדרות": 100, "תל אביב": 1, "מטולה": 0, "לא קיים": 50})
+    levels = md.dot_levels(counts, loc, proj, levels=4)
+    assert len(levels) == 4
+    assert [len(x) for x, _ in levels] == [1, 0, 0, 1]  # Tel Aviv dimmest, Sderot brightest
+    assert sum(len(x) for x, _ in md.dot_levels(pd.Series(dtype=int), loc, proj)) == 0

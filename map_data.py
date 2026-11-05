@@ -210,3 +210,58 @@ def colorscale(zero_color, layer_ramps):
             scale.append([lo + (hi - lo) * i / (len(steps) - 1), c])
     scale[-1][0] = 1.0
     return scale
+
+
+# --------------------------------------------------------------------------------------
+# Dot maps (header background, locator next to the place picker)
+# --------------------------------------------------------------------------------------
+# The dots share the viewBox of the decorative outline in dashboard_style.ISRAEL_PATH (0 0 180 460);
+# DOT_FRAME is the box the outline fills there (x0, y0, x1, y1).
+DOT_VIEWBOX = (180, 460)
+DOT_FRAME = (7, 6, 175, 455)
+DOT_LEVELS = 4
+
+
+def dot_projection(lat, lng):
+    """Fit lat/lng to DOT_FRAME (equirectangular, x scaled by cos(mean latitude), aspect kept).
+
+    Fit on *all* localities, so the dots keep their place whatever subset is drawn.
+    Returns a dict for project().
+    """
+    lat = np.asarray(lat, dtype=float)
+    lng = np.asarray(lng, dtype=float)
+    kx = float(np.cos(np.radians(lat.mean())))
+    x0, y0, x1, y1 = DOT_FRAME
+    span_x = (lng.max() - lng.min()) * kx or 1.0
+    span_y = (lat.max() - lat.min()) or 1.0
+    scale = min((x1 - x0) / span_x, (y1 - y0) / span_y)
+    return {"lng0": float(lng.min()), "lat1": float(lat.max()), "kx": kx, "scale": scale, "x0": x0, "y0": y0}
+
+
+def project(lat, lng, proj):
+    """lat/lng -> (x, y) in the dot viewBox (y grows southward)."""
+    x = proj["x0"] + (np.asarray(lng, dtype=float) - proj["lng0"]) * proj["kx"] * proj["scale"]
+    y = proj["y0"] + (proj["lat1"] - np.asarray(lat, dtype=float)) * proj["scale"]
+    return x.round(1), y.round(1)
+
+
+def dot_points(geo_names, localities, proj):
+    """(x, y) arrays for geo names found in ``localities`` (unknown names are skipped)."""
+    loc = localities.reindex([g for g in pd.unique(pd.Series(list(geo_names), dtype=object)) if g in localities.index])
+    return project(loc["lat"], loc["lng"], proj)
+
+
+def dot_levels(counts, localities, proj, levels=DOT_LEVELS):
+    """Bucket localities with alerts into ``levels`` brightness steps by sqrt-scaled count.
+
+    counts: Series geo name -> count. Returns a list of ``levels`` (x, y) array pairs, dimmest first;
+    localities with count 0 or without coordinates are left out.
+    """
+    counts = counts[(counts > 0) & counts.index.isin(localities.index)]
+    out = []
+    if counts.empty:
+        return [(np.array([]), np.array([])) for _ in range(levels)]
+    step = np.minimum((intensity(counts.to_numpy(), counts.max()) * levels).astype(int), levels - 1)
+    for k in range(levels):
+        out.append(dot_points(counts.index[step == k], localities, proj))
+    return out
