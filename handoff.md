@@ -7,113 +7,122 @@
 
 ## 1. מה קיים היום
 
-### Pipeline
+### שני מסלולים במקביל
+
+**מסלול חדש (דשבורד, כל סוגי ההתרעות):**
 ```
 Telegram ("צופר - צבע אדום")
-   │  telegram_alarms.py  (Telethon, iter_messages מ-min_date עד max_date)
+   │  collect_alerts.py   איסוף אינקרמנטלי, שמירת הודעות גולמיות
    ▼
-tzofar_red_color.xlsx   [date, text]   כל שורה = שעה אחת, וכל שורת טקסט = "אזור: יישובים"
-   │  data_stats.read_my_data()
+data/raw_messages.jsonl   {id, date (UTC), edit_date, text}   (עוד לא קיים: צריך להריץ איסוף)
+   │  build_dataset.py  +  alerts_parser.py  +  city_names.py
+   │  (תקופות שלא מכוסות בהודעות הגולמיות נלקחות מ-tzofar_red_color.xlsx)
    ▼
-my_data_tzofer_red_full.pkl   zone → city → CustomDateTime(date) → "HH:MM" → count
-my_data_tzofer_red.pkl        zone → city → date → {"hour": {h: n}, "minute": {m: n}}
-   │  data_plots.py  (matplotlib)
+data/alerts.csv.gz        timestamp | alert_type | zone | city | shelter_sec | message_id | source
+data/alert_ends.csv.gz    timestamp | zone | city | message_id      ("סיום אירוע")
+   │  dashboard_data.py (חישובים)  +  dashboard.py (Streamlit)
    ▼
-partial_plots/*.png + *.txt
+streamlit run dashboard.py
 ```
 
-> שימו לב: השמות של שני קובצי ה-pickle מבלבלים. הקובץ `_full` הוא דווקא הגרסה **ברזולוציית דקה**, והקובץ בלי `_full` הוא הגרסה המקובצת לפי שעה ולפי דקה בנפרד.
+**מסלול ישן (matplotlib, צבע אדום בלבד). עובד ולא נשבר:**
+```
+telegram_alarms.py → tzofar_red_color.xlsx → data_stats.py (pickle) → data_plots.py → partial_plots/*.png
+python partial_plot.py
+```
+> שמות קובצי ה-pickle מבלבלים: `_full` הוא דווקא הגרסה **ברזולוציית דקה** (`zone → city → date → "HH:MM" → count`).
 
-### נתונים שנאספו
-- טווח: **28/02/2026 עד 27/03/2026** (28 ימים, `dates.txt`).
-- 1,798 רשומות שעה ב-`tzofar_red_color.xlsx`.
-- רק **צבע אדום**. חדירת כלי טיס וחדירת מחבלים מסוננות היום במכוון (`FILTER_ALERTS` ב-`telegram_alarms.py`).
-- צילומי המסך מהערוץ (06/2026) מראים שהערוץ ממשיך לפרסם. הנתונים בריפו לא כוללים את התקופה שאחרי 27/03/2026.
+### נתונים בריפו
+- `data/alerts.csv.gz`: 76,318 רשומות, **28/02/2026 עד 27/03/2026**, צבע אדום בלבד (מקור: האקסל הישן).
+- בנתונים האלה **אין** זמני התגוננות, חדירת כלי טיס או חדירת מחבלים: האקסל הישן סינן ומחק אותם.
+  הם יופיעו אחרי הרצה של `python collect_alerts.py --since 2026-02-26`.
+- בהשוואה ל-pickle הישן יש כ-4.6% פחות רשומות. הסיבה: הקוד הישן ספר פעמיים יישוב שהופיע פעמיים באותה דקה (בלוק שעה כפול באקסל). הקוד החדש מסיר את הכפילויות לפי `(timestamp, alert_type, zone, city)`. בנוסף, "בת ים" מנורמל עכשיו נכון ל-"בת - ים".
 
-### גרפים קיימים (`data_plots.py`)
-- `bar_0_1` … `bar_14`: עמודות לפי אזור, יישוב, תאריך ושעה, top-N, ותבניות חוזרות.
-- `bar_15`, `bar_16`: צפיפות התרעות לפי חלונות זמן ביום.
-- `bar_16_color_general`: **heatmap של שעה × דקה** לכל תנאי סינון, עם hover אינטראקטיבי ושמירת טבלת דירוג ל-txt.
-- `partial_plot.py` מריץ כרגע רק `plot_16_color` עם `properties_18_general` (אשקלון, ראשון, נתניה).
+### הדשבורד (`dashboard.py`)
+- **סינון בסרגל הצד**:
+  - טווח מהיר (כל התקופה / 7 / 30 / 90 ימים, יחסית ליום האחרון בנתונים) וטווח תאריכים.
+  - סוג התרעה, אזור, ויישוב (רשימת היישובים מסוננת לפי האזור שנבחר).
+  - אופן ספירה: **יישובים** (כל יישוב נספר) או **אירועים** (כל דקה וסוג נספרים פעם אחת).
+- **KPI**: סה"כ, ימים עם התרעות, ממוצע ליום פעיל, שעת שיא, היישוב המותקף ביותר.
+- **לשוניות**:
+  - **ציר זמן**: רזולוציה מדקה עד שבוע. אם יש יותר מ-2,500 עמודות הרזולוציה עוברת אוטומטית לגסה יותר.
+  - **שעות ביום**: התפלגות לפי שעה, יום בשבוע × שעה, ושעה × דקה (הגרסה האינטראקטיבית של `bar_16_color`).
+  - **לוח ימים × שעות**.
+  - **אזורים ויישובים**: top N.
+  - **זמן התגוננות**.
+  - **נתונים**: טבלה והורדת CSV.
+- **עיצוב**:
+  - צבע קבוע לכל סוג התרעה, בטוח לעיוורון צבעים: כחול לצבע אדום, כתום לכלי טיס, טורקיז למחבלים.
+  - מצב בהיר ומצב כהה. RTL על התוכן בלבד.
+  - נבדק בצילומי מסך ברוחב 1400px וברוחב 420px (מובייל).
 
-### סינונים (`coditions.py`)
-יישובים ספציפיים (אשקלון, ת"א, ראשון, נתניה, חיפה, באקה), אזורים (צפון/מרכז/דרום), עוטף עזה וקו העימות.
+### בדיקות
+`pytest -q` מריץ 22 בדיקות: הפרסר (לפי פורמט ההודעות מצילומי המסך) וחישובי הדשבורד.
+`streamlit.testing.v1.AppTest` הורץ ידנית על הדשבורד עם סינונים שונים, בלי חריגות.
 
 ---
 
-## 2. בעיות ידועות (לטפל קודם)
+## 2. בעיות ידועות / דברים לשים לב
 
-| # | בעיה | מיקום | חומרה |
-|---|---|---|---|
-| 1 | **פרטי Telegram API ומספר טלפון נמצאים ב-commit בריפו** | `parameters.py` | 🔴 גבוהה: מומלץ לבטל את ה-api_hash ב-my.telegram.org, להעביר ל-`.env` ולהוסיף ל-`.gitignore` |
-| 2 | חסר פסיק ברשימה: `"🔓 חשש לחדירת מחבלים" "🔴 התרעה"` מתחברים למחרוזת אחת | `telegram_alarms.py` (`ALERTS`) | 🟠 בינונית: התרעות חדירת מחבלים לא מזוהות |
-| 3 | אין `requirements.txt`. חסרות התלויות `matplotlib`, `ivsort`, `telethon` | שורש הריפו | 🟠 |
-| 4 | התיקיות `partial_plots/` ו-`graphs/` לא קיימות, ולכן `savefig` / `os.listdir` קורסים | `data_plots.py`, `telegram_alarms.py` | 🟠 |
-| 5 | `get_all_zones` קוראת `HT_zones.txt`, שלא קיים בריפו | `data_stats.py` | 🟠: `apply_collect_data()` נכשל |
-| 6 | השעות מסומנות כ-UTC אבל בפועל הן שעון ישראל | `telegram_alarms.update_state` | 🟡: לא משפיע על הגרפים, אבל מטעה |
-| 7 | `import *` בשרשרת (`data_plots` ← `data_stats` ← `parameters`) ומשתנים גלובליים | כללי | 🟡 |
-| 8 | כפילויות: אותה הודעה יכולה להופיע גם כטקסט וגם כ-caption של תמונה. הבדיקה `[date, text] in all_data` היא O(n²) | `telegram_alarms.py` | 🟡 |
-| 9 | אין בדיקות (tests) לפענוח ההודעות | — | 🟡 |
+| # | נושא | סטטוס |
+|---|---|---|
+| 1 | פרטי Telegram API (`api_hash`, טלפון) **עדיין נמצאים בהיסטוריית ה-git** של commits ישנים | 🔴 **מומלץ לבטל את ה-api_hash ב-my.telegram.org** וליצור חדש ב-`.env`. הקוד כבר לא מכיל אותם. |
+| 2 | הפרסר נכתב לפי צילומי מסך, בלי markdown גולמי אמיתי מ-Telethon | 🟠 אחרי האיסוף הראשון, `build_dataset.py` מדפיס את השורות שלא פוענחו. אם יש הרבה שורות כאלה, צריך להתאים את `alerts_parser.py` ולהוסיף fixture לבדיקות. |
+| 3 | `HT_zones.txt` (רשימת היישובים של פיקוד העורף) לא קיים | 🟡 הפונקציה `get_all_zones` מדלגת עליו. הדוח "יישובים ללא התרעות" יוצא ריק. |
+| 4 | השעות במסלול הישן מסומנות כ-UTC אבל בפועל הן שעון ישראל | 🟡 במסלול החדש: שעון ישראל naive, עם המרה מפורשת מ-UTC של טלגרם. |
+| 5 | `import *` בשרשרת ומשתנים גלובליים במסלול הישן | 🟡 לא טופל, כדי לא לשבור את המסלול הישן. |
+| 6 | קבצי ה-py הישנים בפורמט CRLF | ℹ️ לערוך אותם בלי להמיר את סופי השורות (ראו CLAUDE.md). |
+| 7 | Streamlit + locale עברי: רכיב `st.slider` מתהפך (הידית והמילוי לא תואמים) | ℹ️ לכן הדשבורד משתמש ב-`segmented_control` במקום slider. |
+
+### תוקן בסשן 2026-11-05
+- הוסף פסיק חסר ב-`ALERTS`: "חשש לחדירת מחבלים" ו-"התרעה" התחברו למחרוזת אחת.
+- `plt.cm.get_cmap` (הוסר ב-matplotlib 3.9) הוחלף ב-`plt.get_cmap`.
+- נוצרות תיקיות פלט חסרות (`partial_plots/`, `graphs/`).
+- `HT_zones.txt` אופציונלי.
+- טלתון נטען רק כשאוספים, כך שהניתוח רץ גם בלי התקנה שלו.
+- פרטי ההתחברות עברו ל-`.env`. נוספו `.env.example`, `.gitignore` ו-`requirements.txt`.
+- המסלול הישן נבדק מקצה לקצה: `STATISTICS` ו-`EXTRA_STATISTICS` מייצרים 143 קבצים בלי שגיאות.
 
 ---
 
-## 3. איך להתקדם: Roadmap מוצע
+## 3. הצעדים הבאים
 
-### שלב 0: יציבות (קטן, מומלץ ראשון)
-- [ ] להעביר credentials ל-`.env` (`python-dotenv`) ולהוסיף `.gitignore` (`*.session`, `.env`, `partial_plots/`).
-- [ ] `requirements.txt`.
-- [ ] לתקן את הפסיק החסר ב-`ALERTS`.
-- [ ] `os.makedirs(directory, exist_ok=True)` לפני כל שמירה.
-- [ ] לטפל ב-`HT_zones.txt`: להוסיף לריפו או לדלג אם הקובץ חסר.
-
-### שלב 1: מודל נתונים שטוח + סוג התרעה
-המבנה המקונן קשה להרחבה. מומלץ טבלה שטוחה אחת (Parquet או SQLite):
-
-| timestamp (Asia/Jerusalem) | alert_type | zone | city | shelter_sec | message_id |
-|---|---|---|---|---|---|
-
-- `alert_type` ∈ {`rocket` (צבע אדום), `uav` (כלי טיס עוין), `infiltration` (חדירת מחבלים)}.
-- במקום לסנן `FILTER_ALERTS`, לשמור את כל הסוגים ולסנן רק בשלב הניתוח.
-- לחלץ גם את זמן ההתגוננות `(15 שניות)` / `(דקה וחצי)`, שכרגע נזרק.
-- אפשר לשמור גם אירועי "סיום אירוע" בטבלה נפרדת (events), כדי למדוד משך אירוע.
-- `message_id` מטלגרם משמש כמפתח למניעת כפילויות ולאיסוף אינקרמנטלי (`min_id=last_id` במקום לאסוף מחדש מ-`min_date`).
-- את כל ה-`group_by_*` אפשר להחליף ב-`df.groupby([...]).size()` / `pd.Grouper(freq="1h")`.
-- להוסיף `tests/test_parser.py` עם ההודעות מצילומי המסך כ-fixtures.
-
-### שלב 2: דשבורד אינטראקטיבי
-- **Streamlit** (הכי מהיר) או Plotly Dash.
-- פקדים: טווח תאריכים, סוג התרעה, אזור או יישוב (multi-select), רזולוציה (דקה/שעה/יום/שבוע).
-- גרפים מומלצים:
-  - סדרת זמן (line/area) של כמות התרעות לפי הרזולוציה, stacked לפי סוג.
-  - heatmap של יום בשבוע × שעה, ושל תאריך × שעה (ממשיך את `bar_16_color`).
-  - top-N יישובים ואזורים (bar אופקי).
-  - התפלגות זמני התגוננות.
-  - KPI: סה"כ התרעות, ימים עם התרעות, שעת שיא, היישוב המותקף ביותר.
+### מיידי (דורש את המשתמש)
+- [ ] לבטל את ה-api_hash הישן ולמלא `.env` חדש.
+- [ ] להריץ `python collect_alerts.py --since 2026-02-26`. אחר כך לבדוק את פלט "lines could not be parsed", ולעשות commit ל-`data/raw_messages.jsonl` ול-`data/*.csv.gz` המעודכנים.
 
 ### שלב 3: מפה אינטראקטיבית של ישראל (הבקשה של המשתמש)
-- **גאוקודינג של יישובים**: צריך קואורדינטות (או פוליגונים) לכל יישוב ואזור התרעה של פיקוד העורף.
-  מקורות אפשריים: רשימת הפוליגונים של אזורי ההתרעה (בפרויקטים פתוחים כמו `pikud-haoref-api` / רשימות cities.json בקוד פתוח), או גאוקודינג חד-פעמי (OSM Nominatim) שנשמר כ-`data/cities_geo.csv`.
-  יש לבדוק את הרישיון של כל מקור לפני שמשתמשים בו.
-- **ספרייה**: `pydeck` / `folium` בתוך Streamlit, או Plotly `scatter_mapbox` / `choropleth_mapbox`.
+- **גאוקודינג**: צריך קובץ `data/cities_geo.csv` עם `city, lat, lon` (ובהמשך גם פוליגונים של אזורי ההתרעה).
+  מקורות אפשריים: רשימות cities/polygons של פיקוד העורף בפרויקטים פתוחים, או גאוקודינג חד-פעמי מ-OSM Nominatim. **יש לבדוק את הרישיון** של כל מקור.
+  שמות היישובים צריכים להתאים ל-`city_names.normalize_city`.
+- **מימוש**: לשונית "מפה" ב-`dashboard.py` עם `st.pydeck_chart` (ScatterplotLayer / HeatmapLayer, ובהמשך PolygonLayer) או Plotly `scatter_map`.
+  הסינונים הקיימים כבר נותנים את טווח הזמן, הסוג והאזור. נשאר רק `df.groupby("city").size()` ← join עם הקואורדינטות.
 - **פיצ'רים**:
-  - בחירת טווח זמן (slider) ← צביעת יישובים או אזורים לפי כמות ההתרעות (choropleth או bubble).
-  - אנימציה לאורך זמן (play): התרעות לפי שעה או יום.
-  - לחיצה על יישוב ← גרף סדרת זמן והתפלגות שעות של אותו יישוב.
-  - שכבות נפרדות לכל סוג התרעה (צבע אדום / כלי טיס / מחבלים).
-- אופציונלי: פרסום כאתר סטטי (GitHub Pages) עם קובץ JSON מצטבר, או Streamlit Community Cloud.
+  - צביעה לפי כמות, עם סקאלה רציפה בגוון אחד (כמו ה-heatmaps).
+  - אנימציה לפי יום או שעה.
+  - לחיצה על יישוב ← סינון הדשבורד לאותו יישוב.
 
-### שלב 4: אוטומציה
-- סקריפט איסוף אינקרמנטלי שרץ מתוזמן (cron / GitHub Actions עם session מוצפן), כך שהדשבורד מתעדכן בלי איסוף ידני.
+### שלב 4: אוטומציה ופרסום
+- הרצה מתוזמנת של `collect_alerts.py` (cron, או GitHub Actions עם session מוצפן כ-secret).
+- פרסום ב-Streamlit Community Cloud. הנתונים כבר נמצאים ב-`data/`.
+
+### רעיונות נוספים
+- משך אירוע: להצליב בין התרעה ל"סיום אירוע" (`alert_ends.csv.gz`).
+- השוואה בין תקופות (שבוע מול שבוע) והשוואה בין יישובים כ-small multiples.
+- להעביר את המסלול הישן לקרוא מ-`data/alerts.csv.gz` ולוותר על ה-pickles.
 
 ---
 
-## 4. איך מריצים היום
+## 4. איך מריצים
 
 ```bash
-pip install telethon pandas openpyxl matplotlib numpy ivsort
-mkdir -p partial_plots graphs
-# ב-parameters.py: COLLET=False, STATISTICS=False כדי לעבוד רק מה-pickle הקיים
-python partial_plot.py
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+streamlit run dashboard.py           # דשבורד
+python collect_alerts.py             # איסוף (צריך .env)
+python build_dataset.py              # בנייה מחדש של data/alerts.csv.gz
+python partial_plot.py               # גרפים ישנים (matplotlib)
+pytest -q                            # בדיקות
 ```
 
 ---
@@ -122,4 +131,5 @@ python partial_plot.py
 
 | תאריך | מה נעשה |
 |---|---|
-| 2026-11-05 | סקירת הקוד הקיים. נוצרו `CLAUDE.md` (הנחיות) ו-`handoff.md` (מצב ו-roadmap). תועדו בעיות ידועות, כולל credentials שנמצאים ב-commit. עדיין לא בוצעו שינויים בקוד. |
+| 2026-11-05 (1) | סקירת הקוד. נוצרו `CLAUDE.md` ו-`handoff.md`. |
+| 2026-11-05 (2) | תיקון באגים במסלול הישן. העברת credentials ל-`.env`. פרסר חדש לכל סוגי ההתרעות, איסוף אינקרמנטלי, טבלה שטוחה `data/alerts.csv.gz`, דשבורד Streamlit ו-22 בדיקות. |
