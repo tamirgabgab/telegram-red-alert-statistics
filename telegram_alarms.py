@@ -6,7 +6,7 @@ import os
 
 ALERTS = ["🔴 צבע אדום",
           "✈️ חדירת כלי טיס עוין",
-          "🔓 חשש לחדירת מחבלים"
+          "🔓 חשש לחדירת מחבלים",
           "🔴 התרעה",
           "🔴 אזעקת צבע אדום"]
 
@@ -124,7 +124,7 @@ def add_bug_messages(n_messaages, df, all_data):
 
 
 def collect_data_into_excel_tzofar_red_color():
-    client = TelegramClient('test', api_id, api_hash)
+    client = TelegramClient(session_name, api_id, api_hash)
     client.start(phone=phone_number)
     entity = get_entity(client=client, name="צופר - צבע אדום")
 
@@ -173,7 +173,7 @@ def collect_data_into_excel_tzofar_red_color():
 
 
 def collect_data_into_excel_red_color():
-    client = TelegramClient('test', api_id, api_hash)
+    client = TelegramClient(session_name, api_id, api_hash)
     client.start(phone=phone_number)
     entity = get_entity(client=client, name="🔴 צבע אדום 🔴")
 
@@ -199,6 +199,7 @@ def collect_data_into_excel_red_color():
 
 
 def collect_data_into_excel(chat_group_name=chat_name_2):
+    os.makedirs("./graphs/", exist_ok=True)
     for file in os.listdir("./graphs/"):
         os.remove(os.path.join("./graphs/", file))
     if chat_group_name == "🔴 צבע אדום 🔴":

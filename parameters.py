@@ -1,8 +1,17 @@
+import os
 from datetime import datetime, timezone, timedelta
 
-api_id = "25225551"
-api_hash = "b3b076ad17dbba7603c2bc923ded1e58"
-phone_number = '+972527565305'
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:  # python-dotenv is optional; plain environment variables also work
+    pass
+
+# Telegram credentials are read from the environment / .env file (see .env.example).
+# Never commit real values to this file.
+api_id = os.getenv("TELEGRAM_API_ID", "")
+api_hash = os.getenv("TELEGRAM_API_HASH", "")
+phone_number = os.getenv("TELEGRAM_PHONE", "")
 
 # Support only "🔴 צבע אדום 🔴" or  "צופר - צבע אדום"
 # chat_name_1 = "🔴 צבע אדום 🔴"
@@ -16,7 +25,7 @@ min_date = datetime(year=2026, month=2, day=26, hour=0, minute=0, second=0, tzin
 # min_date = datetime(year=2026, month=3, day=27, hour=0, minute=0, second=0, tzinfo=timezone.utc)
 max_date = datetime.now(tz=timezone.utc) + timedelta(hours=3)
 # max_date = datetime(year=2024, month=10, day=2, hour=0, minute=0, second=0, tzinfo=timezone.utc)
-session_name = "test"
+session_name = os.getenv("TELEGRAM_SESSION", "test")
 
 # excel_out_file_1 = "red_color.xlsx"
 excel_out_file_2 = "tzofar_red_color.xlsx"

@@ -1,0 +1,30 @@
+# Secrets - never commit
+.env
+*.session
+*.session-journal
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Generated outputs
+partial_plots/
+graphs/
+zones.txt
+cities.txt
+zones_cities.txt
+all_cities.txt
+all_cities_with_condition.txt
+all_cities_without_condition.txt
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Visual check output (tools/screenshots.js)
+screenshots/
+node_modules/
