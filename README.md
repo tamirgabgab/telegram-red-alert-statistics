@@ -18,6 +18,7 @@ The tool is designed to help analyze the spatial and temporal distribution of ro
 
 ## ✨ Key Features
 
+- **Interactive map of Israel** — every Home Front Command locality polygon colored by alert count for the selected period, a layer per alert type, play-through animation by day / 6 hours / hour, quiet localities in gray, and a click-for-details panel
 - **Interactive dashboard** (Streamlit) — filter by date range, alert type, zone and locality; time series at minute → week resolution, hour-of-day / weekday / day × hour heatmaps, top zones & localities, time-to-shelter, CSV export
 - **All alert types** — 🔴 rockets (צבע אדום), ✈️ hostile aircraft (חדירת כלי טיס עוין), 🔓 terrorist infiltration (חדירת מחבלים)
 - **Incremental Telegram collection** — raw messages are stored once (`data/raw_messages.jsonl`) and re-parsed any time
@@ -52,9 +53,12 @@ telegram-red-alert-statistics/
 ├── build_dataset.py       # Raw messages / legacy Excel -> data/alerts.csv.gz
 ├── alerts_parser.py       # Message parser (all alert types, shelter time, end events)
 ├── city_names.py          # Locality-name tables shared by old and new code
+├── map_data.py            # Map helpers: locality matching, per-locality counts, color encoding
+├── build_geo.py           # Builds data/geo/localities.geojson from pikud-haoref-api
 ├── data/
 │   ├── alerts.csv.gz      # Flat table: timestamp, alert_type, zone, city, shelter_sec, ...
-│   └── alert_ends.csv.gz  # "סיום אירוע" messages
+│   ├── alert_ends.csv.gz  # "סיום אירוע" messages
+│   └── geo/               # Locality polygons + centroids (third-party, Apache 2.0 - see NOTICE.md)
 ├── tests/                 # pytest
 │
 │   Legacy pipeline (matplotlib, red alerts only)
@@ -100,6 +104,9 @@ streamlit run dashboard.py
 
 The repo already contains `data/alerts.csv.gz` (red alerts, 28/02/2026 – 27/03/2026), so the dashboard works right away.
 
+The **מפה** (map) tab loads base-map tiles from CARTO (no API key needed). Without internet access, run
+`MAP_STYLE=white-bg streamlit run dashboard.py` to draw the polygons on a plain background.
+
 ### 3. Collect fresh data (all alert types)
 
 ```bash
@@ -136,6 +143,15 @@ Built-in filter functions cover:
 - **Geographic regions** — North (`צפון`), Center (`מרכז`), South (`דרום`)
 - **Proximity zones** — Gaza envelope (`עוטף עזה`), conflict line (`קו העימות`)
 - **Custom conditions** — Any city/zone/date combination via `coditions.py`
+
+---
+
+## 🙏 Credits
+
+Locality coordinates and polygons come from [pikud-haoref-api](https://github.com/eladnava/pikud-haoref-api)
+by Elad Nava, licensed under the Apache License 2.0. A modified copy is stored in `data/geo/`
+(see `data/geo/NOTICE.md` for the changes and `data/geo/LICENSE-pikud-haoref-api` for the license).
+To refresh it: `python build_geo.py`.
 
 ---
 

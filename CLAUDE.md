@@ -37,6 +37,8 @@
 | `city_names.py` | טבלאות שמות יישובים (`special_str`, `rep_str`) ו-`split_cities()`. משותף למסלול הישן ולחדש |
 | `build_dataset.py` | בניית `data/alerts.csv.gz` מההודעות הגולמיות, ובהעדרן מהאקסל הישן |
 | `dashboard_data.py` | חישובי pandas טהורים לדשבורד (עם בדיקות) |
+| `map_data.py` | לוגיקת המפה: התאמת שמות יישובים לגאו, ספירה לפי יישוב ולפי תמונה (frame), קידוד צבעים לפי שכבות |
+| `build_geo.py` | בניית `data/geo/localities.geojson` מ-pikud-haoref-api (נעוץ ל-commit, רישיון Apache 2.0) |
 | `dashboard.py` | ממשק Streamlit: `streamlit run dashboard.py` |
 | `tests/` | `pytest -q` |
 
@@ -91,7 +93,13 @@ __12:55:__
 - ממשק בעברית, RTL על התוכן בלבד (`stMain`, `stSidebarUserContent`). גרפים, טבלאות, שדה תאריך ו-segmented controls נשארים LTR.
 - לא להשתמש ב-`st.slider`: הוא מתהפך כשה-locale של הדפדפן עברי. להשתמש ב-`segmented_control` או ב-`selectbox`.
 - צבע קבוע לכל סוג התרעה (`TYPE_ORDER` ב-`dashboard.py`). לא לצבוע לפי דירוג. heatmaps בסקאלה רציפה בגוון אחד.
-- חישובים חדשים נכנסים ל-`dashboard_data.py` עם בדיקה, לא לתוך ה-UI.
+- חישובים חדשים נכנסים ל-`dashboard_data.py` (או `map_data.py` למפה) עם בדיקה, לא לתוך ה-UI.
+- הלשוניות עצלות (`st.tabs(..., on_change="rerun")` + `tab.open`): לשונית כבדה כמו המפה נבנית רק כשהיא פתוחה.
+- **מפה:**
+  - צבע = סוג ההתרעה הדומיננטי ביישוב. עוצמת הצבע = כמות ההתרעות, בסקאלת שורש ריבועי. יישובים בלי התרעות באפור.
+  - שמות יישובים שלא נמצאים בגאו מוסיפים ל-`ALIASES` ב-`map_data.py`. הבדיקה `test_all_current_dataset_localities_are_matched` נכשלת אם יש יישוב בלי מיקום.
+  - הקרדיט לנתוני הגאו חייב להישאר ב-README וב-`data/geo/NOTICE.md`.
+- **בדיקת המפה בצילום מסך בסביבה הזו:** אריחי המפה (cartocdn) חסומים ברשת, לכן מריצים עם `MAP_STYLE=white-bg`. כרום headless צריך WebGL תוכנתי: `--use-angle=swiftshader --enable-unsafe-swiftshader`.
 
 ### אבטחה
 - **אסור להכניס ל-commit פרטי התחברות** (`api_id`, `api_hash`, מספר טלפון, קבצי `*.session`). הם נקראים מ-`.env` (תבנית: `.env.example`), שמופיע ב-`.gitignore`.
