@@ -91,13 +91,17 @@ def get_alerts():
     return df
 
 
+def notice(title, body):
+    st.markdown(ds.notice_html(title, body), unsafe_allow_html=True)
+
+
 TITLE = "סטטיסטיקת התרעות"
 SUBTITLE = "נתוני התרעות פיקוד העורף מערוץ הטלגרם \"צופר - צבע אדום\""
 
 alerts = get_alerts()
 if alerts.empty:
     st.markdown(ds.hero_html(TITLE, SUBTITLE, []), unsafe_allow_html=True)
-    st.info("עדיין אין נתוני התרעות להצגה. הנתונים יופיעו כאן אחרי העדכון הבא.")
+    notice("עדיין אין נתונים להצגה", "נתוני ההתרעות יופיעו כאן אחרי העדכון הבא.")
     if DEV:
         st.caption("לאיסוף: `python collect_alerts.py --since 2026-02-26`")
     st.stop()
@@ -154,7 +158,7 @@ with st.sidebar:
     st.button("ניקוי סינון", on_click=reset_filters, width="stretch")
 
     st.divider()
-    st.caption(f"נתונים: {data_min:%d/%m/%Y} – {data_max:%d/%m/%Y} · {len(alerts):,} רשומות")
+    st.markdown(ds.sidebar_meta_html(data_min, data_max, len(alerts)), unsafe_allow_html=True)
     sources = alerts["source"].value_counts()
     if "telegram" not in sources:
         st.caption("בשלב זה מוצגים נתוני צבע אדום בלבד. סוגי התרעות נוספים יתווספו בעדכון הבא.")
@@ -173,30 +177,44 @@ if cities:
 elif zones:
     scope = ", ".join(zones[:3]) + (f" ועוד {len(zones) - 3}" if len(zones) > 3 else "")
 data_until = alerts["timestamp"].max()
-st.markdown(ds.hero_html(TITLE, SUBTITLE, [
-    (scope, "plain"),
-    (f"{start:%d/%m/%Y} – {end:%d/%m/%Y}", "ltr"),
-    (f"הנתונים מעודכנים עד {data_until:%d/%m/%Y %H:%M}", "status"),
-]), unsafe_allow_html=True)
+chips = [(scope, "plain"), (f"{start:%d/%m/%Y} – {end:%d/%m/%Y}", "ltr")]
+if types:
+    chips.append((", ".join(dd.type_label(t) for t in types), "plain"))
+if mode == dd.MODE_EVENTS:
+    chips.append(("ספירה לפי אירועים", "plain"))
+chips.append((f"הנתונים מעודכנים עד {data_until:%d/%m/%Y %H:%M}", "status"))
+st.markdown(ds.hero_html(TITLE, SUBTITLE, chips), unsafe_allow_html=True)
+
+# On narrow screens the sidebar is closed: the chips show the active filter, and this clears it.
+filtered = bool(types or zones or cities) or (start, end) != (data_min, data_max)
+if filtered:
+    st.button("ניקוי סינון", on_click=reset_filters, key="reset_top", icon=":material/filter_alt_off:")
 
 if df.empty:
-    st.info("אין התרעות שמתאימות לסינון הזה. אפשר להרחיב את טווח התאריכים או להסיר חלק מהאזורים והיישובים.")
-    st.button("ניקוי סינון", on_click=reset_filters, key="reset_empty")
+    notice("אין התרעות שמתאימות לסינון", "אפשר להרחיב את טווח התאריכים, או להסיר חלק מהסוגים, האזורים והיישובים.")
+    st.markdown(ds.footer_html(data_until), unsafe_allow_html=True)
     st.stop()
 
 k = dd.kpis(df, mode)
-c1, c2, c3, c4 = st.columns(4)
-c1.metric(unit, f"{k['total']:,}")
-c2.metric("ימים עם התרעות", f"{k['active_days']:,}", help=f"מתוך {(end - start).days + 1} ימים בטווח")
-c3.metric("ממוצע ליום פעיל", f"{k['per_active_day']:,.1f}")
-c4.metric("שעת שיא", f"{k['peak_hour']:02d}:00",
-          help=f"השעה ביום עם הכי הרבה התרעות: {k['peak_hour']:02d}:00 עד {k['peak_hour']:02d}:59")
-if len(set(df["city"])) > 1:
-    st.caption(f"היישוב עם הכי הרבה התרעות: **{k['top_city']}** ({k['top_city_count']:,}) · "
-               f"{k['localities']:,} יישובים קיבלו התרעה בטווח")
+last = dd.last_alert(df)
+last_where = last["place"] + (f" · {last['localities']:,} יישובים" if last["localities"] > 1 else "")
+st.markdown(ds.kpi_cards_html([
+    {"label": unit, "value": f"{k['total']:,}", "primary": True,
+     "sub": f"{k['localities']:,} יישובים קיבלו התרעה" if mode == dd.MODE_LOCALITIES
+            else "כל דקה וסוג נספרים פעם אחת"},
+    {"label": "ימים עם התרעות", "value": f"{k['active_days']:,}", "sub": f"מתוך {(end - start).days + 1:,} ימים בטווח"},
+    {"label": "ממוצע ליום פעיל", "value": f"{round(k['per_active_day']):,}", "sub": unit},
+    {"label": "שעת שיא", "value": f"{k['peak_hour']:02d}:00", "ltr": True,
+     "sub": "השעה העמוסה ביותר ביממה"},
+    {"label": "היישוב עם הכי הרבה התרעות", "value": k["top_city"], "text": True,
+     "sub": f"{k['top_city_count']:,} התרעות ביישוב"},
+    {"label": "התרעה אחרונה בטווח", "value": f"{last['timestamp']:%d/%m/%Y %H:%M}", "ltr": True, "text": True,
+     "sub": last_where},
+]), unsafe_allow_html=True)
 
-tab_time, tab_hours, tab_days, tab_places, tab_shelter, tab_data = st.tabs(
-    ["ציר זמן", "שעות ביום", "לוח ימים × שעות", "אזורים ויישובים", "זמן התגוננות", "נתונים"])
+tab_time, tab_hours, tab_places, tab_shelter, tab_data = st.tabs(
+    ["ציר זמן", "דפוסי שעות", "מקומות", "זמן התגוננות", "נתונים"])
+tab_days = tab_hours  # the day x hour calendar is the last chart of the hour-patterns tab
 
 
 def stacked_bars(wide, x_title, height=380, hover_x="%{x}"):
@@ -314,8 +332,8 @@ with tab_places:
 with tab_shelter:
     sd = dd.shelter_distribution(df)
     if sd.empty:
-        st.info("נתוני זמן ההתגוננות יופיעו אחרי העדכון הבא של הנתונים. "
-                "המקור הנוכחי (ארכיון ישן של הערוץ) לא שמר אותם.")
+        notice("עדיין אין נתוני זמן התגוננות",
+               "הם יופיעו אחרי העדכון הבא של הנתונים. המקור הנוכחי (ארכיון ישן של הערוץ) לא שמר אותם.")
         if DEV:
             st.caption("כדי להשלים: `python collect_alerts.py --since 2026-02-26`")
     else:
@@ -335,8 +353,12 @@ with tab_data:
     view = df.assign(alert_type=df["alert_type"].map(dd.type_label)).rename(columns={
         "timestamp": "זמן", "alert_type": "סוג", "zone": "אזור", "city": "יישוב", "shelter_sec": "זמן התגוננות (שניות)",
     })[["זמן התגוננות (שניות)", "יישוב", "אזור", "סוג", "זמן"]].sort_values("זמן", ascending=False)  # LTR grid: time ends up on the right
+    if view["זמן התגוננות (שניות)"].isna().all():  # old archive rows carry no shelter time
+        view = view.drop(columns="זמן התגוננות (שניות)")
     st.caption(f"{len(view):,} רשומות (כל שורה היא יישוב שהופעלה בו התרעה בדקה מסוימת)")
     st.dataframe(view, width="stretch", hide_index=True, height=480,
                  column_config={"זמן": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
     st.download_button("הורדת הנתונים המסוננים (CSV)", view.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"alerts_{start:%Y%m%d}_{end:%Y%m%d}.csv", mime="text/csv")
+
+st.markdown(ds.footer_html(data_until), unsafe_allow_html=True)

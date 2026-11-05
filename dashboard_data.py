@@ -160,6 +160,22 @@ def kpis(df, mode=MODE_LOCALITIES):
     }
 
 
+def last_alert(df):
+    """The most recent alert minute: its time, type(s) and where it sounded.
+
+    Returns None for an empty frame. ``place`` is the locality when only one sounded,
+    otherwise the zone with the most localities in that minute.
+    """
+    if df.empty:
+        return None
+    ts = df["timestamp"].max()
+    rows = df[df["timestamp"] == ts]
+    n = int(rows["city"].nunique())
+    place = rows["city"].iloc[0] if n == 1 else rows["zone"].value_counts().index[0]
+    types = [t for t in rows["alert_type"].value_counts().index]
+    return {"timestamp": ts, "types": types, "localities": n, "place": place}
+
+
 def busiest(series_or_frame):
     """(index, value) of the largest bin of a series / summed frame; None for empty input."""
     s = series_or_frame.sum(axis=1) if isinstance(series_or_frame, pd.DataFrame) else series_or_frame

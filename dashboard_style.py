@@ -125,7 +125,51 @@ def global_css(t):
   /* Streamlit adds a hover anchor to headings; not useful in the banner */
   .ra-hero [data-testid="stHeaderActionElements"] {{ display: none; }}
 
+  /* ---- KPI cards ------------------------------------------------------------------ */
+  .ra-kpis {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 8px; }}
+  @media (min-width: 1600px) {{ .ra-kpis {{ grid-template-columns: repeat(6, minmax(0, 1fr)); }} }}
+  .ra-kpi {{
+    background: var(--ra-card); border: 1px solid var(--ra-border); border-radius: var(--ra-radius);
+    padding: 14px 16px; min-width: 0;
+  }}
+  .ra-kpi--primary {{ border-inline-start: 4px solid var(--ra-brand); }}
+  .ra-kpi__label {{ font-size: 0.85rem; line-height: 1.4; color: var(--ra-muted); margin: 0; }}
+  .ra-kpi__value {{
+    font-size: 1.75rem; font-weight: 700; line-height: 1.25; color: var(--ra-ink); margin: 4px 0 2px;
+    font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+  }}
+  .ra-kpi__value--text {{ font-size: 1.25rem; padding-top: 6px; }}
+  .ra-kpi__sub {{ font-size: 0.8rem; line-height: 1.45; color: var(--ra-ink2); margin: 0; }}
+
+  /* ---- Notice (neutral replacement for st.info) -------------------------------------- */
+  .ra-notice {{
+    display: flex; gap: 12px; align-items: flex-start; margin: 4px 0 12px;
+    background: var(--ra-surface); border: 1px solid var(--ra-border); border-radius: var(--ra-radius);
+    padding: 14px 16px; color: var(--ra-ink2); font-size: 0.95rem; line-height: 1.55;
+  }}
+  .ra-notice svg {{ flex: none; margin-top: 2px; color: var(--ra-muted); }}
+  .ra-notice strong {{ display: block; color: var(--ra-ink); font-weight: 700; margin-bottom: 2px; }}
+
+  /* ---- Footer ------------------------------------------------------------------------ */
+  .ra-footer {{
+    margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--ra-border);
+    color: var(--ra-muted); font-size: 0.85rem; line-height: 1.6;
+  }}
+  .ra-footer p {{ margin: 0 0 8px; font-size: 0.85rem; color: var(--ra-muted); }}
+  .ra-footer strong {{ color: var(--ra-ink2); }}
+  .ra-footer a {{ color: var(--ra-brand-strong); }}
+  .ra-side-meta {{ color: var(--ra-muted); font-size: 0.85rem; line-height: 1.6; margin: 0; }}
+
+  /* Readable secondary text (Streamlit's default caption is ~4.3:1) */
+  [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {{ color: var(--ra-muted); }}
+  /* Segmented controls wrap instead of running off narrow screens */
+  [data-testid="stButtonGroup"], [data-testid="stButtonGroup"] > div {{ flex-wrap: wrap; }}
+
   @media (max-width: 640px) {{
+    .ra-kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
+    .ra-kpi {{ padding: 12px; }}
+    .ra-kpi__value {{ font-size: 1.4rem; }}
+    .ra-kpi__value--text {{ font-size: 1.05rem; }}
     /* Leave room for the fixed app header (sidebar toggle) on narrow screens */
     .block-container {{ padding-top: 3.75rem; }}
     .ra-hero {{ padding: 20px 18px 18px; border-radius: 12px; }}
@@ -194,3 +238,51 @@ def hero_html(title, subtitle, chips):
 def _flatten(html):
     """st.markdown treats indented lines as a code block: strip indentation and blank lines."""
     return "\n".join(line.strip() for line in html.splitlines() if line.strip())
+
+
+INFO_ICON = (
+    '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" focusable="false">'
+    '<circle cx="10" cy="10" r="8.25" fill="none" stroke="currentColor" stroke-width="1.5"/>'
+    '<path d="M10 9v5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
+    '<circle cx="10" cy="6.3" r="1" fill="currentColor"/></svg>'
+)
+
+
+def kpi_cards_html(cards):
+    """cards: list of dicts with label, value, sub, and optional primary / text (long word value) / ltr."""
+    out = []
+    for c in cards:
+        cls = "ra-kpi" + (" ra-kpi--primary" if c.get("primary") else "")
+        vcls = "ra-kpi__value" + (" ra-kpi__value--text" if c.get("text") else "")
+        value = escape(str(c["value"]))
+        if c.get("ltr"):
+            value = f'<bdi dir="ltr">{value}</bdi>'
+        sub = f'<div class="ra-kpi__sub">{escape(c["sub"])}</div>' if c.get("sub") else ""
+        # divs, not <p>: Streamlit's markdown styles for p would override the sizes
+        out.append(f'<div class="{cls}"><div class="ra-kpi__label">{escape(c["label"])}</div>'
+                   f'<div class="{vcls}">{value}</div>{sub}</div>')
+    return f'<section class="ra-kpis" aria-label="מדדים עיקריים">{"".join(out)}</section>'
+
+
+def notice_html(title, body):
+    """Neutral message block: what happened and what to do next."""
+    return (f'<div class="ra-notice" role="status">{INFO_ICON}'
+            f'<div><strong>{escape(title)}</strong>{escape(body)}</div></div>')
+
+
+def footer_html(data_until):
+    return _flatten(f"""
+<footer class="ra-footer">
+  <p><strong>מקור:</strong> ערוץ הטלגרם "צופר - צבע אדום". הנתונים מעודכנים עד
+    <bdi dir="ltr">{data_until:%d/%m/%Y %H:%M}</bdi>.</p>
+  <p><strong>איך סופרים:</strong> "התרעות ביישובים" סופר כל יישוב שבו הופעלה התרעה. התרעה אחת יכולה להפעיל
+    עשרות יישובים, ולכן זה לא מספר הרקטות. "אירועים" סופר כל דקה וסוג התרעה פעם אחת.</p>
+  <p><strong>האתר אינו רשמי</strong> ואינו מחליף את התרעות פיקוד העורף. בזמן אמת יש לפעול לפי ההנחיות
+    <a href="https://www.oref.org.il" target="_blank" rel="noopener">באתר פיקוד העורף</a> ובאפליקציה הרשמית.</p>
+</footer>
+""")
+
+
+def sidebar_meta_html(data_min, data_max, n_rows):
+    return (f'<div class="ra-side-meta">נתונים: <bdi dir="ltr">{data_min:%d/%m/%Y} – {data_max:%d/%m/%Y}</bdi>'
+            f'<br><bdi dir="ltr">{n_rows:,}</bdi> רשומות</div>')

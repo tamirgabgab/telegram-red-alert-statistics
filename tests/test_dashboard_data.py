@@ -89,3 +89,15 @@ def test_top_counts_and_shelter():
     assert dd.top_counts(df, "city", 1).to_dict() == {"זרעית": 2}
     assert dd.top_counts(df, "zone", 1, dd.MODE_EVENTS).to_dict() == {"קו העימות": 2}
     assert dd.shelter_distribution(df).to_dict() == {15: 3, 90: 1}
+
+
+def test_last_alert():
+    df = make_df()
+    last = dd.last_alert(df)
+    assert last["timestamp"] == pd.Timestamp("2026-06-20 23:10")
+    assert last["place"] == "חולון" and last["localities"] == 1 and last["types"] == ["rocket"]
+
+    gaza = dd.filter_alerts(df, zones=["עוטף עזה"])
+    last = dd.last_alert(gaza)
+    assert last["localities"] == 3 and last["place"] == "עוטף עזה"
+    assert dd.last_alert(df.iloc[0:0]) is None
