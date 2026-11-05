@@ -4,6 +4,7 @@ Run:  streamlit run dashboard.py
 Data: data/alerts.csv.gz (built by build_dataset.py / collect_alerts.py; built automatically if missing).
 """
 
+import os
 from datetime import timedelta
 
 import pandas as pd
@@ -12,6 +13,7 @@ import streamlit as st
 
 import dashboard_data as dd
 import dashboard_style as ds
+import map_data as md
 from alerts_parser import ALERT_TYPE_LABELS
 from build_dataset import load_alerts
 
@@ -216,9 +218,19 @@ st.markdown(ds.kpi_cards_html([
      "sub": last_where},
 ]), unsafe_allow_html=True)
 
-tab_time, tab_recent, tab_hours, tab_places, tab_shelter, tab_data = st.tabs(
-    ["ציר זמן", "אחרונות", "דפוסי שעות", "מקומות", "התגוננות", "נתונים"])
+TAB_NAMES = ["ציר זמן", "מפה", "אחרונות", "שעות", "מקומות", "התגוננות", "נתונים"]
+try:
+    # Lazy tabs: the heavy map is only built while its tab is open (Streamlit >= 1.5x).
+    tabs = st.tabs(TAB_NAMES, key="tab", on_change="rerun")
+except TypeError:
+    tabs = st.tabs(TAB_NAMES)
+tab_time, tab_map, tab_recent, tab_hours, tab_places, tab_shelter, tab_data = tabs
 tab_days = tab_hours  # the day x hour calendar is the last chart of the hour-patterns tab
+
+
+def tab_is_open(tab):
+    is_open = getattr(tab, "open", None)
+    return True if is_open is None else bool(is_open)
 
 
 def stacked_bars(wide, x_title, height=380, hover_x="%{x}"):
@@ -264,6 +276,243 @@ with tab_recent:
     st.caption(f"המטחים האחרונים בטווח, מהחדש לישן. מטח הוא רצף התרעות מאותו סוג בהפרש של עד "
                f"{dd.BARRAGE_GAP_MIN} דקות.")
     st.markdown(ds.feed_html(recent, type_color, dd.type_label), unsafe_allow_html=True)
+
+# --- Map ------------------------------------------------------------------------------
+# Base map tiles (no API key). Set MAP_STYLE=white-bg to use the map without internet tiles.
+MAP_STYLE = {"light": "carto-positron", "dark": "carto-darkmatter"}
+MAP_ZERO = {"light": "#DDE0E4", "dark": "#2F333B"}  # "no alerts" fill, neutral gray
+
+
+@st.cache_resource(show_spinner="טוען את מפת היישובים...")
+def get_geo():
+    polygons, localities = md.load_geo()
+    return polygons, localities, md.build_matcher(localities.index)
+
+
+@st.cache_data
+def city_mapping(cities):
+    return md.map_cities(cities, get_geo()[2])
+
+
+def layer_ramp(alert_type):
+    """Single-hue ramp for one layer, low -> high, selected separately for light and dark maps."""
+    base = type_color(alert_type)
+    if T is ds.THEMES["dark"]:
+        return md.ramp(base, md.mix(base, T["surface"], 0.6), md.mix(base, "#ffffff", 0.6))
+    return md.ramp(base, md.mix(base, "#ffffff", 0.8), md.mix(base, "#000000", 0.35))
+
+
+def map_figure(frames_counts, layers, poly_names, point_names, poly_text, point_text, frame_labels, selected):
+    """Polygon + point traces sharing one piecewise colorscale; optional animation frames."""
+    theme_key = "dark" if T is ds.THEMES["dark"] else "light"
+    scale = md.colorscale(MAP_ZERO[theme_key], [layer_ramp(t) for t in layers])
+    vmax = max((w.sum(axis=1).max() for w in frames_counts if len(w)), default=0)
+    labels = [dd.type_label(t) for t in layers]
+    hover = "<b>%{text}</b><br>" + "<br>".join(f"{lab}: %{{customdata[{i}]:,}}" for i, lab in enumerate(labels))
+    if len(layers) > 1:
+        hover += f"<br>סה\"כ: %{{customdata[{len(layers)}]:,}}"
+    hover += "<extra></extra>"
+
+    def trace_values(wide):
+        pc, pcounts = md.encode(wide, poly_names, layers, vmax)
+        qc, qcounts = md.encode(wide, point_names, layers, vmax)
+        add_total = (lambda c: [list(r) + [int(sum(r))] for r in c]) if len(layers) > 1 else (lambda c: c.tolist())
+        return pc, add_total(pcounts), qc, add_total(qcounts)
+
+    polygons = get_geo()[0]
+    pc, pcd, qc, qcd = trace_values(frames_counts[0])
+    fig = go.Figure([
+        go.Choroplethmap(
+            geojson=polygons, locations=poly_names, featureidkey="id", z=pc, zmin=0, zmax=1, colorscale=scale,
+            showscale=False, marker_opacity=0.85, marker_line_width=0.4, marker_line_color=T["card"],
+            selected=dict(marker=dict(opacity=0.85)), unselected=dict(marker=dict(opacity=0.85)),
+            text=poly_text, customdata=pcd, hovertemplate=hover, name=""),
+        go.Scattermap(
+            lat=get_geo()[1].loc[point_names, "lat"], lon=get_geo()[1].loc[point_names, "lng"], mode="markers",
+            marker=dict(size=6, color=qc, cmin=0, cmax=1, colorscale=scale, opacity=0.9),
+            selected=dict(marker=dict(opacity=0.9)), unselected=dict(marker=dict(opacity=0.9)),
+            text=point_text, customdata=qcd, hovertemplate=hover, name=""),
+    ])
+    if selected and selected in set(poly_names):
+        fig.add_trace(go.Choroplethmap(
+            geojson=polygons, locations=[selected], featureidkey="id", z=[1],
+            colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0)"]], showscale=False,
+            marker_line_width=2.5, marker_line_color=T["ink"], hoverinfo="skip", name=""))
+    elif selected and selected in set(point_names):
+        loc = get_geo()[1].loc[selected]
+        fig.add_trace(go.Scattermap(lat=[loc["lat"]], lon=[loc["lng"]], mode="markers", hoverinfo="skip",
+                                    marker=dict(size=16, color="rgba(0,0,0,0)"), name=""))
+
+    if len(frames_counts) > 1:
+        frames = []
+        for label, wide in zip(frame_labels, frames_counts):
+            pc, pcd, qc, qcd = trace_values(wide)
+            frames.append(go.Frame(name=label, traces=[0, 1], data=[
+                go.Choroplethmap(z=pc, customdata=pcd), go.Scattermap(marker=dict(color=qc), customdata=qcd)]))
+        fig.frames = frames
+        play = dict(frame=dict(duration=700, redraw=True), fromcurrent=True, transition=dict(duration=0))
+        fig.update_layout(
+            updatemenus=[dict(type="buttons", direction="left", x=0.01, y=0.99, xanchor="left", yanchor="top",
+                              pad=dict(r=6, t=6), bgcolor=T["card"], bordercolor=T["axis"],
+                              font=dict(color=T["ink"]), buttons=[
+                                  dict(label="▶ הפעלה", method="animate", args=[None, play]),
+                                  dict(label="⏸ עצירה", method="animate",
+                                       args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])])],
+            sliders=[dict(active=0, x=0.02, len=0.96, y=0.02, yanchor="bottom", pad=dict(t=0, b=6),
+                          bgcolor=T["grid"], bordercolor=T["axis"],
+                          # Too many frames -> step labels collide; hide them and rely on the current value.
+                          font=dict(color=T["ink2"] if len(frame_labels) <= 31 else "rgba(0,0,0,0)", size=11),
+                          currentvalue=dict(prefix="", font=dict(color=T["ink"], size=14), xanchor="right"),
+                          steps=[dict(label=lab, method="animate",
+                                      args=[[lab], dict(frame=dict(duration=0, redraw=True), mode="immediate")])
+                                 for lab in frame_labels])])
+    fig.update_layout(
+        map=dict(style=os.getenv("MAP_STYLE") or MAP_STYLE[theme_key], center=dict(lat=31.75, lon=35.0), zoom=6.95),
+        height=680, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor=T["card"], showlegend=False,
+        uirevision="map",  # keep zoom/pan when the app reruns (e.g. after a click)
+        hoverlabel=dict(font_family=FONT, bgcolor=T["card"], font_color=T["ink"], bordercolor=T["axis"]),
+        font=dict(family=FONT, color=T["ink2"]))
+    return fig
+
+
+def map_legend(layers):
+    def strip(colors):
+        return (f'<span style="display:inline-block;width:96px;height:10px;border-radius:2px;vertical-align:middle;'
+                f'background:linear-gradient(to left, {", ".join(colors)})"></span>')
+    theme_key = "dark" if T is ds.THEMES["dark"] else "light"
+    parts = [f'<span style="white-space:nowrap">{dd.type_label(t)}: מעט {strip(layer_ramp(t))} הרבה</span>'
+             for t in layers]
+    parts.append(f'<span style="white-space:nowrap"><span style="display:inline-block;width:12px;height:10px;'
+                 f'border-radius:2px;vertical-align:middle;background:{MAP_ZERO[theme_key]}"></span> אין התרעות</span>')
+    note = "צבע = סוג ההתרעה הנפוץ ביישוב · " if len(layers) > 1 else ""
+    st.markdown(f'<div style="display:flex;flex-wrap:wrap;gap:6px 20px;font-size:0.85rem;color:{T["ink2"]}">'
+                f'{"".join(parts)}</div><div style="font-size:0.8rem;color:{T["muted"]};margin-top:2px">'
+                f'{note}עוצמת הצבע בסקאלת שורש ריבועי, כדי להבחין גם בין יישובים עם כמויות דומות</div>',
+                unsafe_allow_html=True)
+
+
+def select_city_from_map(event, poly_names, point_names):
+    """Turn a map click into st.session_state['map_city'] (only when the click changed)."""
+    points = (event or {}).get("selection", {}).get("points", []) if isinstance(event, dict) else \
+        getattr(getattr(event, "selection", None), "points", []) or []
+    if not points:
+        return
+    pt = points[0]
+    name = pt.get("location")
+    if name is None and pt.get("curve_number") == 1:
+        idx = pt.get("point_index", pt.get("point_number"))
+        name = point_names[idx] if idx is not None and idx < len(point_names) else None
+    click_id = (name, pt.get("curve_number"), pt.get("point_index"))
+    if name and st.session_state.get("_map_last_click") != click_id:
+        st.session_state["_map_last_click"] = click_id
+        st.session_state["map_city"] = name
+
+
+def focus_dashboard_on(our_cities):
+    st.session_state["zones"] = []
+    st.session_state["cities"] = sorted(our_cities)
+
+
+def locality_details(geo_name, dfg, layers, localities):
+    info = localities.loc[geo_name]
+    sub = dfg[(dfg["geo"] == geo_name) & dfg["alert_type"].isin(layers)]
+    shelter = info.get("countdown")
+    shelter_txt = ""
+    if pd.notna(shelter):
+        s = int(shelter)
+        shelter_txt = " · זמן התגוננות: " + ("מיידי" if s == 0 else f"{s} שניות" if s < 60 else
+                                             "דקה" if s == 60 else "דקה וחצי" if s == 90 else f"{s // 60} דקות")
+    st.subheader(geo_name)
+    st.caption(f"{info.get('zone', '')}{shelter_txt}")
+    if sub.empty:
+        notice("אין התרעות ביישוב הזה", "לא היו התרעות בטווח ובשכבות שנבחרו. אפשר להרחיב את טווח התאריכים.")
+        return
+    cards = [{"label": dd.type_label(t), "value": f"{int((sub['alert_type'] == t).sum()):,}", "sub": "התרעות ביישוב"}
+             for t in layers]
+    cards.append({"label": "התרעה אחרונה", "value": f"{sub['timestamp'].max():%d/%m/%Y %H:%M}", "ltr": True,
+                  "text": True})
+    st.markdown(ds.kpi_cards_html(cards), unsafe_allow_html=True)
+    left, right = st.columns(2)
+    with left:
+        fig = stacked_bars(dd.hour_of_day(sub), "שעה ביום", height=280, hover_x="%{x}:00")
+        fig.update_xaxes(tickmode="array", tickvals=list(range(0, 24, 3)), ticktext=[f"{h:02d}" for h in range(0, 24, 3)])
+        fig.update_yaxes(title_text="התרעות")
+        fig.update_layout(title_text="לפי שעה ביום")
+        show(fig)
+    with right:
+        daily = dd.time_series(sub, "1D", start=start, end=end)
+        fig = stacked_bars(daily, "", height=280, hover_x="%{x|%d/%m/%Y}")
+        fig.update_xaxes(tickformat="%d/%m")
+        fig.update_yaxes(title_text="התרעות")
+        fig.update_layout(title_text="לפי יום")
+        show(fig)
+    our_names = sorted(sub["city"].unique())
+    st.button(f"הצג את כל הדשבורד עבור {geo_name}", on_click=focus_dashboard_on, args=(our_names,),
+              help="מסנן את כל הלשוניות ליישוב הזה (אפשר לבטל ב'ניקוי סינון')")
+
+
+with tab_map:
+    if tab_is_open(tab_map):
+        polygons, localities, _ = get_geo()
+        mapping = city_mapping(tuple(sorted(alerts["city"].unique())))
+        dfg, unmatched = md.attach_geo(df, mapping)
+
+        present = [t for t in TYPE_ORDER if t in set(df["alert_type"])]
+        c_layers, c_anim, c_res = st.columns([3, 1.4, 2])
+        with c_layers:
+            layers = st.pills("שכבות", present, selection_mode="multi", default=present, key="map_layers",
+                              format_func=dd.type_label, help="אפשר להדליק ולכבות כל סוג התרעה")
+        with c_anim:
+            animate = st.toggle("אנימציה לאורך זמן", key="map_anim")
+        frame_freq = None
+        if animate:
+            with c_res:
+                fr_label = st.segmented_control("כל תמונה מציגה", list(md.FRAME_RESOLUTIONS), default="יום",
+                                                key="map_frame") or "יום"
+            frame_freq = md.effective_frame_freq(start, end, md.FRAME_RESOLUTIONS[fr_label])
+            if frame_freq != md.FRAME_RESOLUTIONS[fr_label]:
+                eff = next(k for k, v in md.FRAME_RESOLUTIONS.items() if v == frame_freq)
+                st.caption(f"הטווח ארוך מדי לתמונה לכל {fr_label}, ולכן כל תמונה מציגה {eff}. "
+                           "לרזולוציה עדינה יותר צריך לצמצם את טווח התאריכים.")
+
+        layers = [t for t in TYPE_ORDER if t in (layers or [])]
+        if not layers:
+            notice("לא נבחרה שכבה", "בחרו לפחות סוג התרעה אחד בשכבות כדי לראות את המפה.")
+        else:
+            poly_names = [f["id"] for f in polygons["features"]]
+            point_names = list(localities.index[~localities["has_polygon"].astype(bool)])
+            text_for = lambda names: [f"{n} · {localities.at[n, 'zone']}" for n in names]  # noqa: E731
+            if frame_freq:
+                by_frame = md.counts_by_frame(dfg, mode, layers, frame_freq, start, end)
+                fmt = "%d/%m/%Y" if frame_freq == "1D" else "%d/%m %H:%M"
+                frame_labels = [f.strftime(fmt) for f in by_frame]
+                frames_counts = list(by_frame.values())
+            else:
+                frame_labels, frames_counts = [""], [md.counts_by_locality(dfg, mode, layers)]
+
+            # The click from the previous interaction is already in session_state: apply it before drawing,
+            # so the highlight shows immediately.
+            select_city_from_map(st.session_state.get("map_chart"), poly_names, point_names)
+            selected = st.session_state.get("map_city")
+            fig = map_figure(frames_counts, layers, poly_names, point_names, text_for(poly_names),
+                             text_for(point_names), frame_labels, selected)
+            st.plotly_chart(fig, width="stretch", config={**PLOTLY_CONFIG, "scrollZoom": True},
+                            theme=None, on_select="rerun", selection_mode="points", key="map_chart")
+            map_legend(layers)
+            if len(unmatched):
+                st.caption(f"{len(unmatched)} יישובים ({int(unmatched.sum()):,} התרעות) לא מופיעים על המפה "
+                           f"כי לא נמצא להם מיקום: {', '.join(unmatched.index[:5])}")
+
+            st.divider()
+            with_alerts = dfg[dfg["alert_type"].isin(layers)]["geo"].value_counts()
+            options = list(with_alerts.index) + sorted(set(localities.index) - set(with_alerts.index))
+            if st.session_state.get("map_city") not in options:
+                st.session_state["map_city"] = None
+            chosen = st.selectbox("פרטי יישוב", options, key="map_city", index=None,
+                                  placeholder="לחצו על יישוב במפה או בחרו מהרשימה",
+                                  format_func=lambda n: f"{n} ({with_alerts.get(n, 0):,})")
+            if chosen:
+                locality_details(chosen, dfg, layers, localities)
 
 # --- Hours of day ---------------------------------------------------------------------
 with tab_hours:
