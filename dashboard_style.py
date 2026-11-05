@@ -125,6 +125,48 @@ def global_css(t):
   /* Streamlit adds a hover anchor to headings; not useful in the banner */
   .ra-hero [data-testid="stHeaderActionElements"] {{ display: none; }}
 
+  /* ---- Motion: only transform/opacity, and only when the user has not asked for less motion.
+     Siren waves expand and fade in a slow loop; trajectory arcs glide in once when the header renders. */
+  .ra-waves-anim {{ display: none; }}
+  @media (prefers-reduced-motion: no-preference) {{
+    .ra-waves-anim {{ display: inline; }}
+    .ra-waves-static circle:not(:first-child) {{ display: none; }}
+    .ra-wave {{
+      transform-box: fill-box; transform-origin: center; opacity: 0;
+      animation: ra-wave 6s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+    }}
+    .ra-wave:nth-child(2) {{ animation-delay: 2s; }}
+    .ra-wave:nth-child(3) {{ animation-delay: 4s; }}
+    .ra-traj {{ animation: ra-traj 1.8s cubic-bezier(0.2, 0.6, 0.35, 1) both; }}
+    .ra-traj:nth-child(2) {{ animation-delay: 0.35s; }}
+    .ra-traj--intercept {{ animation-name: ra-traj-in; animation-delay: 0.9s; }}
+  }}
+  @keyframes ra-wave {{
+    0% {{ transform: scale(0.25); opacity: 0; }}
+    15% {{ opacity: 0.16; }}
+    100% {{ transform: scale(1); opacity: 0; }}
+  }}
+  @keyframes ra-traj {{ from {{ opacity: 0; transform: translate(-36px, 22px); }} }}
+  @keyframes ra-traj-in {{ from {{ opacity: 0; transform: translate(36px, 22px); }} }}
+
+  /* ---- Recent barrages feed ------------------------------------------------------------ */
+  .ra-feed {{ list-style: none; margin: 0; padding: 0; border: 1px solid var(--ra-border); border-radius: var(--ra-radius);
+             background: var(--ra-card); overflow: hidden; }}
+  .ra-feed li {{
+    display: grid; grid-template-columns: 9.5rem minmax(0, 1fr) auto; gap: 4px 16px; align-items: baseline;
+    padding: 12px 16px; border-top: 1px solid var(--ra-border); margin: 0;
+  }}
+  .ra-feed li:first-child {{ border-top: 0; }}
+  .ra-feed__time {{ font-variant-numeric: tabular-nums; color: var(--ra-ink); font-weight: 500; font-size: 0.95rem; }}
+  .ra-feed__time small {{ display: block; color: var(--ra-muted); font-weight: 400; font-size: 0.8rem; }}
+  .ra-feed__where {{ color: var(--ra-ink); font-size: 0.95rem; line-height: 1.5; min-width: 0; }}
+  .ra-feed__where small {{ display: block; color: var(--ra-muted); font-size: 0.8rem; }}
+  .ra-tag {{
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 0.8rem; color: var(--ra-ink2);
+    border: 1px solid var(--ra-border); border-radius: 999px; padding: 1px 10px;
+  }}
+  .ra-tag i {{ width: 8px; height: 8px; border-radius: 50%; flex: none; }}
+
   /* ---- KPI cards ------------------------------------------------------------------ */
   .ra-kpis {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 8px; }}
   @media (min-width: 1600px) {{ .ra-kpis {{ grid-template-columns: repeat(6, minmax(0, 1fr)); }} }}
@@ -167,6 +209,11 @@ def global_css(t):
 
   @media (max-width: 640px) {{
     .ra-kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
+    .ra-feed li {{ grid-template-columns: minmax(0, 1fr) auto; padding: 10px 12px; }}
+    /* six tabs fit on a 375px screen */
+    [data-testid="stTabs"] [role="tablist"] {{ gap: 8px; }}
+    [data-testid="stTabs"] [role="tab"] p {{ font-size: 0.9rem; }}
+    .ra-feed__where {{ grid-column: 1 / -1; grid-row: 2; }}
     .ra-kpi {{ padding: 12px; }}
     .ra-kpi__value {{ font-size: 1.4rem; }}
     .ra-kpi__value--text {{ font-size: 1.05rem; }}
@@ -200,17 +247,24 @@ def hero_html(title, subtitle, chips):
     background = """
 <svg class="ra-hero__bg" viewBox="0 0 1200 240" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
   <g fill="none" stroke="#fff" stroke-linecap="round" stroke-dasharray="2 9" stroke-width="2">
-    <path d="M-40 250 Q 260 -30 600 170" opacity=".16"/>
-    <path d="M60 270 Q 420 10 820 230" opacity=".11"/>
-    <path d="M760 260 Q 650 120 520 128" opacity=".16"/>
+    <path class="ra-traj" d="M-40 250 Q 260 -30 600 170" opacity=".16"/>
+    <path class="ra-traj" d="M60 270 Q 420 10 820 230" opacity=".11"/>
+    <path class="ra-traj ra-traj--intercept" d="M760 260 Q 650 120 520 128" opacity=".16"/>
   </g>
 </svg>
 <svg class="ra-hero__waves" viewBox="0 0 500 500" aria-hidden="true" focusable="false">
   <g fill="none" stroke="#fff" stroke-width="1.5">
-    <circle cx="250" cy="250" r="56" opacity=".16"/>
-    <circle cx="250" cy="250" r="100" opacity=".10"/>
-    <circle cx="250" cy="250" r="150" opacity=".06"/>
-    <circle cx="250" cy="250" r="205" opacity=".035"/>
+    <g class="ra-waves-static">
+      <circle cx="250" cy="250" r="56" opacity=".16"/>
+      <circle cx="250" cy="250" r="100" opacity=".10"/>
+      <circle cx="250" cy="250" r="150" opacity=".06"/>
+      <circle cx="250" cy="250" r="205" opacity=".035"/>
+    </g>
+    <g class="ra-waves-anim">
+      <circle class="ra-wave" cx="250" cy="250" r="205"/>
+      <circle class="ra-wave" cx="250" cy="250" r="205"/>
+      <circle class="ra-wave" cx="250" cy="250" r="205"/>
+    </g>
   </g>
 </svg>
 """
@@ -286,3 +340,21 @@ def footer_html(data_until):
 def sidebar_meta_html(data_min, data_max, n_rows):
     return (f'<div class="ra-side-meta">נתונים: <bdi dir="ltr">{data_min:%d/%m/%Y} – {data_max:%d/%m/%Y}</bdi>'
             f'<br><bdi dir="ltr">{n_rows:,}</bdi> רשומות</div>')
+
+
+def feed_html(barrages, color_of, label_of):
+    """Compact list of barrages (newest first): time, where, and a type tag with its color dot."""
+    if barrages.empty:
+        return notice_html("אין מטחים בטווח", "אפשר להרחיב את טווח התאריכים או את הסינון.")
+    items = []
+    for b in barrages.itertuples(index=False):
+        when = f"{b.start:%d/%m/%Y %H:%M}"
+        span = "" if b.end == b.start else f"<small>עד <bdi dir=\"ltr\">{b.end:%H:%M}</bdi></small>"
+        zones = list(b.zones)
+        where = escape(", ".join(zones[:3])) + (f" ועוד {len(zones) - 3}" if len(zones) > 3 else "")
+        n = f"{b.localities:,} יישובים" if b.localities > 1 else "יישוב אחד"
+        tag = (f'<span class="ra-tag"><i style="background:{color_of(b.alert_type)}"></i>'
+               f'{escape(label_of(b.alert_type))}</span>')
+        items.append(f'<li><div class="ra-feed__time"><bdi dir="ltr">{when}</bdi>{span}</div>'
+                     f'<div class="ra-feed__where">{where}<small>{n}</small></div>{tag}</li>')
+    return f'<ul class="ra-feed" aria-label="מטחים אחרונים">{"".join(items)}</ul>'
