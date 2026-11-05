@@ -6,6 +6,12 @@
 [![Telethon](https://img.shields.io/badge/Telethon-Telegram%20API-26A5E4?logo=telegram&logoColor=white)](https://docs.telethon.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+### 👉 [Open the live dashboard](https://red-alert-statistics.streamlit.app)
+
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://red-alert-statistics.streamlit.app)
+
+No install needed: the link opens the dashboard and the map in the browser (desktop and mobile).
+
 ---
 
 ## 🧠 What is this?
@@ -110,6 +116,20 @@ Add `?dev=1` to the URL to see maintainer hints (data collection commands).
 
 The **מפה** (map) tab loads base-map tiles from CARTO (no API key needed). Without internet access, run
 `MAP_STYLE=white-bg streamlit run dashboard.py` to draw the polygons on a plain background.
+
+### Deploy / update the live dashboard (Streamlit Community Cloud)
+
+The live link above is served by [Streamlit Community Cloud](https://share.streamlit.io) straight from `main`.
+One-time setup:
+
+1. Sign in to https://share.streamlit.io with the GitHub account that owns this repo.
+2. **Create app** → **Deploy a public app from GitHub**: repository `tamirgabgab/telegram-red-alert-statistics`, branch `main`, main file `dashboard.py`.
+3. **App URL**: `red-alert-statistics` (so the link is `https://red-alert-statistics.streamlit.app`; if you pick another name, update the two links at the top of this README).
+4. **Advanced settings** → Python **3.12**. No secrets are needed: the dashboard only reads `data/`.
+5. **Deploy**. The first build takes a few minutes.
+
+After that every push to `main` redeploys automatically, so new data (`data/alerts.csv.gz`) appears on the site after a commit.
+An app with no visitors for a while goes to sleep; the first visitor wakes it with one click (about 30 seconds).
 
 ### 3. Collect fresh data (all alert types)
 
