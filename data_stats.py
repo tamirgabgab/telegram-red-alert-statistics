@@ -5,7 +5,6 @@ import pickle
 import random
 import pandas as pd
 import numpy as np
-from telegram_alarms import collect_data_into_excel
 from ivsort import ivsort
 from copy import deepcopy
 from parameters import *
@@ -485,6 +484,11 @@ def create_distribution(full_data, data_dict_fix, hours=1, minutes=0):
 
 
 def get_all_zones(data_dict_cities, n_alerts_min=-float("inf"), n_alerts_max=float("inf")):
+    # HT_zones.txt is an optional HTML dump of the Home Front Command localities list.
+    # Without it we can't list localities that had no alerts, so return empty results.
+    if not os.path.exists("HT_zones.txt"):
+        print("HT_zones.txt not found - skipping the all-localities report")
+        return [], {0: dict(), 1: dict()}
     with open("HT_zones.txt", "r", encoding='utf-8') as file_0:
         all_lines = file_0.readlines()
 
@@ -547,6 +551,7 @@ def collect_data():
     global my_data_tzofer_red
     global my_data_tzofer_red_full
     if COLLET:
+        from telegram_alarms import collect_data_into_excel  # lazy: telethon is only needed for collection
         collect_data_into_excel(chat_group_name=chat_name_2)
         # collect_data_into_excel(chat_group_name=chat_name_1, collect=True)
         # data_1 = read_my_data(file_name=excel_out_file_1, sheet_name=excel_out_sheet)

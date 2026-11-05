@@ -9,6 +9,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from parameters import SHOW, SAVE
 
 directory = "./partial_plots/"
+os.makedirs(directory, exist_ok=True)
 
 hours_tick = range(0, 24, 2)
 minutes_tick = range(0, 60, 5)
@@ -726,7 +727,7 @@ def bar_16_color_general(data, titles, dt_h=1, dt_m=5, show=True):
         txt_file_name = text.replace(" ", "_")
         extent = [0, len(x_tick), len(y_tick), 0]
 
-        plasma = plt.cm.get_cmap('plasma')
+        plasma = plt.get_cmap('plasma')
         new_colors = plasma(np.linspace(0, 1, 256))
         new_colors[0] = [0, 0, 0, 1]
         cmap = LinearSegmentedColormap.from_list('custom_plasma', new_colors)
