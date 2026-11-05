@@ -76,17 +76,15 @@ def style(fig, height=380, legend=True):
     return fig
 
 
-def show(fig, title=None, subtitle="", note=None, fixed_width=False, icon=None):
-    """Chart with its title and subtitle above. The source line is shown once per tab (tab_source)."""
-    if title:
-        st.markdown(ds.chart_head_html(title, subtitle, icon), unsafe_allow_html=True)
-    st.plotly_chart(fig, width="content" if fixed_width else "stretch", config=PLOTLY_CONFIG, theme=None)
-    if note:
-        st.markdown(ds.chart_foot_html(note), unsafe_allow_html=True)
-
-
 def head(title, subtitle="", icon=None):
     st.markdown(ds.chart_head_html(title, subtitle, icon), unsafe_allow_html=True)
+
+
+def show(fig, title=None, subtitle="", fixed_width=False, icon=None):
+    """Chart with its title and subtitle above. The source line is shown once per tab (tab_source)."""
+    if title:
+        head(title, subtitle, icon)
+    st.plotly_chart(fig, width="content" if fixed_width else "stretch", config=PLOTLY_CONFIG, theme=None)
 
 
 def tab_source():
@@ -119,69 +117,88 @@ def notice(title, body):
 
 @st.cache_resource(show_spinner="טוען את מפת היישובים...")
 def get_geo():
+    """Polygons and localities for the map tab (heavy: only the map tab calls this)."""
     polygons, localities = md.load_geo()
-    return polygons, localities, md.build_matcher(localities.index)
+    return polygons, localities
+
+
+@st.cache_resource
+def get_points():
+    """Locality coordinates only, for the header dots, the locator and name matching."""
+    return md.load_points()
 
 
 @st.cache_data
 def city_mapping(cities):
-    return md.map_cities(cities, get_geo()[2])
+    return md.map_cities(cities, md.build_matcher(get_points().index))
 
 
 @st.cache_resource
 def dot_base():
-    """Projection of every locality into the outline's viewBox (header dots and locator)."""
-    localities = get_geo()[1]
-    proj = md.dot_projection(localities["lat"], localities["lng"])
-    return proj, md.project(localities["lat"], localities["lng"], proj)
+    """Projection into the outline's viewBox, and every locality projected (the locator's silhouette)."""
+    points, proj = get_points(), md.dot_projection()
+    return proj, md.project(points["lat"], points["lng"], proj)
 
 
 def geo_names_of(frame):
     return frame["city"].map(city_mapping(ALL_CITIES)).dropna()
 
 
-def hero_dots(frame):
-    """Brightness levels of the localities with alerts in ``frame`` (counted in the current mode)."""
+# The header dots, the locator and the sidebar depend only on the selection: cached per selection, so
+# clicks that do not change it (tabs, map, chart controls) do not recompute them.
+def selection_frame(sel, all_types=False, whole_period=False):
+    """Alerts for a selection key (start, end, types, zones, cities)."""
+    start_, end_, types_, zones_, cities_ = sel
+    lo, hi = (data_min, data_max) if whole_period else (start_, end_)
+    picked = dd.filter_alerts(alerts, lo, hi, [] if all_types else list(types_))
+    return dd.filter_places(picked, list(zones_), list(cities_))
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def hero_dots(sel, count_mode):
+    """Brightness levels of the localities with alerts in the selection (counted in the mode)."""
+    frame = selection_frame(sel)
     if frame.empty:
         return None
     dfg = frame.assign(geo=geo_names_of(frame)).dropna(subset=["geo"])
-    counts = md.counts_by_locality(dfg, mode, sorted(dfg["alert_type"].unique())).sum(axis=1)
-    return md.dot_levels(counts, get_geo()[1], dot_base()[0])
+    counts = md.counts_by_locality(dfg, count_mode, sorted(dfg["alert_type"].unique())).sum(axis=1)
+    return md.dot_levels(counts, get_points(), dot_base()[0])
 
 
-def locator(zones, cities, frame):
+@st.cache_data(show_spinner=False, max_entries=64)
+def locator(sel):
     """Locator figure: all localities in gray, the picked zones and localities in red.
 
-    With no place picked, the localities with alerts in ``frame`` are tinted instead."""
-    proj, localities = dot_base()[0], get_geo()[1]
-    if not (zones or cities):
-        alerted = md.dot_points(geo_names_of(frame.drop_duplicates("city")), localities, proj)
+    With no place picked, the localities with alerts in the selection are tinted instead."""
+    _, _, _, zones_, cities_ = sel
+    proj, points = dot_base()[0], get_points()
+    if not (zones_ or cities_):
+        alerted = md.dot_points(geo_names_of(selection_frame(sel).drop_duplicates("city")), points, proj)
         return ds.locator_html(dot_base()[1], alerted, "כל הארץ", faint=True)
-    picked = alerts[alerts["zone"].isin(zones) | alerts["city"].isin(cities)].drop_duplicates("city")
-    selected = md.dot_points(geo_names_of(picked), localities, proj)
-    if len(zones) + len(cities) == 1:
-        label = (zones or cities)[0]
-    else:
-        label = f"{len(zones) + len(cities)} מקומות"
+    picked = alerts[alerts["zone"].isin(zones_) | alerts["city"].isin(cities_)].drop_duplicates("city")
+    selected = md.dot_points(geo_names_of(picked), points, proj)
+    label = (zones_ or cities_)[0] if len(zones_) + len(cities_) == 1 else f"{len(zones_) + len(cities_)} מקומות"
     return ds.locator_html(dot_base()[1], selected, label)
 
 
-def toggle_type(alert_type):
-    """Legend click: add or remove one type from the type selection in the bar."""
-    cur = list(st.session_state.get("types") or [])
-    cur = [t for t in cur if t != alert_type] if alert_type in cur else cur + [alert_type]
-    st.session_state["types"] = [t for t in TYPE_ORDER if t in cur]
+@st.cache_data(show_spinner=False, max_entries=64)
+def sidebar_numbers(sel, count_mode):
+    """Coverage strip (whole period, current place and types) and per-type totals (all types, picked range)."""
+    values, in_range = dd.coverage_daily(selection_frame(sel, whole_period=True), count_mode,
+                                         data_min, data_max, sel[0], sel[1])
+    totals = dd.type_totals(selection_frame(sel, all_types=True), count_mode)
+    return values, in_range, {t: int(n) for t, n in totals.items()}
 
 
-def sidebar_overview():
-    """Data coverage (whole period, current place and types; picked range in red) and the type legend."""
-    all_days = dd.filter_places(dd.filter_alerts(alerts, data_min, data_max, types), zones, cities)
-    daily = dd.time_series(all_days, "1D", mode, data_min, data_max).sum(axis=1)
-    in_range = [(start <= d.date() <= end) for d in daily.index]
-    st.markdown(ds.coverage_html(daily.values, in_range, T["brand"], T["axis"], data_min, data_max,
+def legend_click(alert_type):
+    st.session_state["types"] = dd.toggle_type(st.session_state.get("types") or [], alert_type, TYPE_ORDER)
+
+
+def sidebar_overview(sel):
+    """Data coverage (picked range in red) and the type legend; a legend click isolates a type."""
+    values, in_range, totals = sidebar_numbers(sel, mode)
+    st.markdown(ds.coverage_html(values, in_range, T["brand"], T["axis"], data_min, data_max,
                                  note="באדום: הטווח שנבחר"), unsafe_allow_html=True)
-    in_period = dd.filter_places(dd.filter_alerts(alerts, start, end, []), zones, cities)
-    by_type = dd.time_series(in_period, "1D", mode, start, end).sum() if len(in_period) else pd.Series(dtype=int)
     chosen = set(types)
     entries = []
     st.markdown(f'<div class="ra-coverage__title">סוגי התרעות · {escape(unit)}</div>', unsafe_allow_html=True)
@@ -189,9 +206,9 @@ def sidebar_overview():
         for i, t in enumerate(present_types):
             key = f"legend_{i}"
             entries.append((key, ds.type_shape(t), type_color(t), not chosen or t in chosen))
-            st.button(f"{dd.type_label(t)} · {int(by_type.get(t, 0)):,}", key=key, type="tertiary",
-                      on_click=toggle_type, args=(t,),
-                      help="לחיצה מוסיפה את הסוג לבחירה או מסירה אותו ממנה")
+            st.button(f"{dd.type_label(t)} · {totals.get(t, 0):,}", key=key, type="tertiary",
+                      on_click=legend_click, args=(t,),
+                      help="לחיצה מציגה רק את הסוג הזה. לחיצה נוספת מחזירה את כל הסוגים")
     st.markdown(ds.legend_css(entries), unsafe_allow_html=True)
 
 
@@ -311,11 +328,12 @@ if filtered:
 
 df = dd.filter_places(dd.filter_alerts(alerts, start, end, types), zones, cities)
 unit = UNITS[mode]
-hero_slot.markdown(ds.hero_html(TITLE, SUBTITLE, chips, dots=hero_dots(df)), unsafe_allow_html=True)
+sel = (start, end, tuple(types), tuple(zones), tuple(cities))
+hero_slot.markdown(ds.hero_html(TITLE, SUBTITLE, chips, dots=hero_dots(sel, mode)), unsafe_allow_html=True)
 with c_locator:
-    st.markdown(locator(zones, cities, df), unsafe_allow_html=True)
+    st.markdown(locator(sel), unsafe_allow_html=True)
 with side_slot:
-    sidebar_overview()
+    sidebar_overview(sel)
 
 if df.empty:
     notice("אין התרעות שמתאימות לבחירה", "אפשר להרחיב את התקופה, או להסיר חלק מהסוגים, האזורים והיישובים.")
@@ -369,7 +387,7 @@ def stacked_bars(wide, x_title, height=380, hover_x="%{x}"):
     for t in [t for t in TYPE_ORDER if t in wide.columns]:
         fig.add_bar(x=wide.index, y=wide[t], name=type_name(t), marker_color=type_color(t),
                     marker_line_width=gap, marker_line_color=T["card"],
-                    hovertemplate=f"{hover_x}<br>{dd.type_label(t)}: %{{y:,}}<extra></extra>")
+                    hovertemplate=f"{hover_x}<br>{type_name(t)}: %{{y:,}}<extra></extra>")
     fig.update_layout(barmode="stack", barcornerradius=4)
     style(fig, height=height, legend=len(wide.columns) > 1)
     fig.update_yaxes(rangemode="tozero")
@@ -435,9 +453,14 @@ with tab_time:
     fig.update_layout(margin=dict(l=8, r=8, t=34, b=8))
     if fixed:
         fig.update_layout(width=n_weeks * cell + 150)
-    # Week labels ("22/02") are wider than a cell: short ranges show the first and last week only,
-    # longer ones every second (narrow cells: every third) week.
-    ticks = sorted({0, n_weeks - 1}) if n_weeks <= 6 else list(range(0, n_weeks, 2 if cell >= 30 else 3))
+    # Week labels ("22/02") are wider than a cell: up to 3 weeks only the first label, up to 6 the first
+    # and last, longer ranges every second (narrow cells: every third) week.
+    if n_weeks <= 3:
+        ticks = [0]
+    elif n_weeks <= 6:
+        ticks = [0, n_weeks - 1]
+    else:
+        ticks = list(range(0, n_weeks, 2 if cell >= 30 else 3))
     fig.update_yaxes(autorange="reversed", type="category", ticksuffix="  ", showgrid=False)
     fig.update_xaxes(type="category", side="top", showgrid=False, tickangle=0,
                      tickvals=ticks, ticktext=[f"{cal.columns[i]:%d/%m}" for i in ticks])
@@ -472,7 +495,7 @@ def map_figure(frames_counts, layers, poly_names, point_names, poly_text, point_
     theme_key = "dark" if T is ds.THEMES["dark"] else "light"
     scale = md.colorscale(MAP_ZERO[theme_key], [layer_ramp(t) for t in layers])
     vmax = max((w.sum(axis=1).max() for w in frames_counts if len(w)), default=0)
-    labels = [dd.type_label(t) for t in layers]
+    labels = [type_name(t) for t in layers]
     hover = "<b>%{text}</b><br>" + "<br>".join(f"{lab}: %{{customdata[{i}]:,}}" for i, lab in enumerate(labels))
     if len(layers) > 1:
         hover += f"<br>סה\"כ: %{{customdata[{len(layers)}]:,}}"
@@ -613,7 +636,7 @@ def locality_details(geo_name, dfg, layers, localities):
 
 with tab_map:
     if tab_is_open(tab_map):
-        polygons, localities, _ = get_geo()
+        polygons, localities = get_geo()
         mapping = city_mapping(ALL_CITIES)
         dfg, unmatched = md.attach_geo(df, mapping)
 
@@ -775,7 +798,7 @@ with tab_places:
         zt = dd.zone_table(df, mode, start, end)
         st.session_state["_top_zone_names"] = list(zt["zone"])
         zview = pd.DataFrame({
-            "daily": zt["daily"], "top_type": zt["top_type"].map(dd.type_label),
+            "daily": zt["daily"], "top_type": zt["top_type"].map(type_name),
             "median_gap": zt["median_gap"].map(dd.format_duration), "night": zt["night_share"] * 100,
             "localities": zt["localities"], "total": zt["total"], "zone": zt["zone"],
         })
@@ -873,7 +896,9 @@ with tab_data:
     if view["זמן התגוננות (שניות)"].isna().all():  # old archive rows carry no shelter time
         view = view.drop(columns="זמן התגוננות (שניות)")
     st.caption(f"{len(view):,} רשומות (כל שורה היא יישוב שהופעלה בו התרעה בדקה מסוימת)")
-    st.dataframe(view, width="stretch", hide_index=True, height=480,
+    with_shape = {dd.type_label(t): type_name(t) for t in present_types}  # on screen only; the CSV keeps plain names
+    st.dataframe(view.assign(**{"סוג": view["סוג"].map(lambda v: with_shape.get(v, v))}),
+                 width="stretch", hide_index=True, height=480,
                  column_config={"זמן": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
     st.download_button("הורדת הנתונים המסוננים (CSV)", view.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"alerts_{start:%Y%m%d}_{end:%Y%m%d}.csv", mime="text/csv")

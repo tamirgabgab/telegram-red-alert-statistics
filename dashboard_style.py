@@ -156,7 +156,6 @@ def global_css(t):
   }}
   .st-key-type_legend [data-testid="stButton"] button p {{ font-size: 0.875rem; font-variant-numeric: tabular-nums; }}
   .st-key-type_legend [data-testid="stButton"] button::before {{ font-size: 0.8rem; line-height: 1; flex: none; }}
-  .ra-chart-foot {{ margin: -6px 0 8px; font-size: 0.75rem; line-height: 1.4; color: var(--ra-muted); }}
   /* Selection bar: the main controls, right under the header */
   .st-key-filterbar {{ padding: 4px 0 2px; }}
   .st-key-reset_top button {{ color: var(--ra-brand-strong); }}
@@ -182,7 +181,7 @@ def global_css(t):
   }}
   .ra-hero__bg {{ position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }}
   .ra-hero__map {{
-    position: absolute; left: 3%; top: -6%; height: 112%; width: auto; z-index: -1; pointer-events: none;
+    position: absolute; left: 3%; top: 4%; height: 92%; width: auto; z-index: -1; pointer-events: none;
   }}
   /* Siren waves are centered on the siren mark (right side, RTL) */
   .ra-hero__waves {{
@@ -248,6 +247,10 @@ def global_css(t):
       background-size: 420px auto, 420px auto;
     }}
     .block-container {{ background: var(--ra-page); }}
+  }}
+  /* An open sidebar (~300px) eats the margin: then the motifs need a wider screen to have room */
+  @media (min-width: 1500px) and (max-width: 1859px) {{
+    .stApp:has([data-testid="stSidebar"][data-collapsed="false"]) [data-testid="stMain"] {{ background-image: none; }}
   }}
 
   /* ---- Recent barrages feed ------------------------------------------------------------ */
@@ -383,10 +386,12 @@ def hero_html(title, subtitle, chips, dots=None):
 </svg>
 """
     dot_layers = ""
+    levels = len(dots or [])
     for k, (x, y) in enumerate(dots or []):
         if len(x):
-            width = 2.0 if k < len(dots) - 1 else 2.6
-            dot_layers += (f'<path d="{dots_path(x, y)}" stroke="#fff" stroke-opacity="{HERO_DOT_ALPHA[k]}" '
+            width = 2.0 if k < levels - 1 else 2.6
+            alpha = HERO_DOT_ALPHA[0] + (HERO_DOT_ALPHA[1] - HERO_DOT_ALPHA[0]) * k / max(levels - 1, 1)
+            dot_layers += (f'<path d="{dots_path(x, y)}" stroke="#fff" stroke-opacity="{alpha:.2f}" '
                            f'stroke-width="{width}" stroke-linecap="round" vector-effect="non-scaling-stroke"/>')
     outline_alpha = 0.14 if dot_layers else 0.22
     israel = (f'<svg class="ra-hero__map" viewBox="0 0 180 460" aria-hidden="true" focusable="false">'
@@ -410,7 +415,7 @@ def hero_html(title, subtitle, chips, dots=None):
     return _flatten(html)
 
 
-HERO_DOT_ALPHA = (0.3, 0.48, 0.68, 0.92)
+HERO_DOT_ALPHA = (0.3, 0.92)  # dimmest and brightest level; levels in between are interpolated
 
 
 def dots_path(x, y):
@@ -523,10 +528,6 @@ def chart_head_html(title, subtitle="", icon=None):
 def tab_source_html(text):
     """The source line, once at the end of a tab."""
     return f'<div class="ra-tab-source">{escape(text)}</div>'
-
-
-def chart_foot_html(text):
-    return f'<div class="ra-chart-foot">{escape(text)}</div>'
 
 
 def coverage_html(values, in_range, on_color, off_color, first, last, note=""):

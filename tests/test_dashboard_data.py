@@ -190,3 +190,30 @@ def test_gap_histogram_bins():
     assert h["עד 5 דקות"] == 2 and h["15–30 דקות"] == 1 and h["3–6 שעות"] == 1 and h["יותר מיממה"] == 1
     assert int(h.sum()) == 5 and list(h.index)[0] == "עד 5 דקות"
     assert int(dd.gap_histogram(pd.Series(dtype="timedelta64[ns]")).sum()) == 0
+
+
+def test_coverage_daily_covers_whole_period_and_marks_range():
+    values, in_range = dd.coverage_daily(make_df(), dd.MODE_LOCALITIES, date(2026, 6, 13), date(2026, 6, 21),
+                                         date(2026, 6, 14), date(2026, 6, 17))
+    assert len(values) == len(in_range) == 9
+    assert values[1] == 3 and values[4] == 2 and values[7] == 1 and sum(values) == 6
+    assert in_range == [False, True, True, True, True, False, False, False, False]
+    empty_values, _ = dd.coverage_daily(make_df().iloc[0:0], dd.MODE_EVENTS, date(2026, 6, 13), date(2026, 6, 14),
+                                        date(2026, 6, 13), date(2026, 6, 14))
+    assert empty_values == [0, 0]
+
+
+def test_type_totals_follow_the_mode():
+    df = make_df()
+    assert dd.type_totals(df, dd.MODE_LOCALITIES).to_dict() == {"rocket": 4, "uav": 2}
+    assert dd.type_totals(df, dd.MODE_EVENTS).to_dict() == {"rocket": 2, "uav": 2}
+    assert dd.type_totals(df, dd.MODE_BARRAGES).to_dict() == {"rocket": 2, "uav": 1}  # 12:53 and 12:56: one barrage
+    assert dd.type_totals(df.iloc[0:0], dd.MODE_EVENTS).empty
+
+
+def test_toggle_type_isolates_then_returns_to_all():
+    order = ["rocket", "uav", "infiltration"]
+    assert dd.toggle_type([], "uav", order) == ["uav"]                    # all shown -> only this one
+    assert dd.toggle_type(["uav"], "uav", order) == []                    # only this one -> all again
+    assert dd.toggle_type(["uav"], "rocket", order) == ["rocket", "uav"]  # add, kept in order
+    assert dd.toggle_type(["rocket", "uav"], "rocket", order) == ["uav"]  # remove

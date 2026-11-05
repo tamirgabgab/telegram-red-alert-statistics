@@ -413,3 +413,43 @@ def gap_histogram(gap_series):
     edges = [-0.001] + [hi for hi, _ in GAP_BINS]
     binned = pd.cut(minutes, bins=edges, labels=labels, right=True)
     return binned.value_counts().reindex(labels, fill_value=0)
+
+
+# --------------------------------------------------------------------------------------
+# Sidebar: data coverage and the type legend
+# --------------------------------------------------------------------------------------
+def coverage_daily(df, mode, first, last, start, end):
+    """Daily totals over the whole data period [first, last] and, per day, whether it is in [start, end].
+
+    Returns (values, in_range): two lists of the same length, one entry per day.
+    """
+    days = pd.date_range(pd.Timestamp(first), pd.Timestamp(last), freq="1D")
+    ts = time_series(df, "1D", mode, first, last)
+    totals = ts.sum(axis=1).reindex(days, fill_value=0) if len(ts) else pd.Series(0, index=days)
+    in_range = [pd.Timestamp(start) <= d <= pd.Timestamp(end) for d in days]
+    return [int(v) for v in totals.values], in_range
+
+
+def type_totals(df, mode):
+    """Count per alert type in the unit of the mode (localities / events / barrages)."""
+    if df.empty:
+        return pd.Series(dtype=int)
+    return apply_mode(df, mode)["alert_type"].value_counts()
+
+
+def toggle_type(selected, alert_type, order):
+    """Legend click on ``alert_type`` given the current type selection (empty = all types shown).
+
+    All shown -> show only this type. Only this type shown -> back to all.
+    Otherwise add or remove it; removing the last one also means all. Result follows ``order``.
+    """
+    selected = [t for t in selected if t in order]
+    if not selected:
+        chosen = [alert_type]
+    elif selected == [alert_type]:
+        chosen = []
+    elif alert_type in selected:
+        chosen = [t for t in selected if t != alert_type]
+    else:
+        chosen = selected + [alert_type]
+    return [t for t in order if t in chosen]
