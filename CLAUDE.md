@@ -38,7 +38,8 @@
 | `build_dataset.py` | בניית `data/alerts.csv.gz` מההודעות הגולמיות, ובהעדרן מהאקסל הישן |
 | `dashboard_data.py` | חישובי pandas טהורים לדשבורד (עם בדיקות) |
 | `dashboard.py` | ממשק Streamlit: `streamlit run dashboard.py` |
-| `dashboard_style.py` | טוקני עיצוב (`THEMES`), CSS גלובלי ופס הכותרת (`hero_html`). הצבעים תואמים ל-`.streamlit/config.toml` |
+| `dashboard_style.py` | טוקני עיצוב (`THEMES`), CSS גלובלי, פס הכותרת (`hero_html`), כרטיסי מדדים, הודעה, פיד ופוטר. הצבעים תואמים ל-`.streamlit/config.toml` |
+| `tools/screenshots.js` | בדיקה ויזואלית: צילום כל הלשוניות במחשב ובמובייל, בבהיר ובכהה |
 | `tests/` | `pytest -q` |
 
 **מסלול ישן: matplotlib, צבע אדום בלבד. לא לשבור אותו**
@@ -80,7 +81,7 @@ __12:55:__
 ### קוד
 - Python 3.9 ומעלה. לשמור על הסגנון הקיים (פונקציות, בלי מחלקות מיותרות) אלא אם מבקשים refactor.
 - לעבוד בתוך venv: `python -m venv .venv && pip install -r requirements.txt`. אם setuptools של המערכת נכשל בבניית `ivsort`/`pyaes`, ה-venv פותר את זה.
-- לפני commit להריץ `pytest -q`. כשנוגעים בדשבורד, להריץ אותו (`streamlit run dashboard.py`) ולבדוק בצילום מסך, גם במצב כהה וגם ברוחב מובייל.
+- לפני commit להריץ `pytest -q`. כשנוגעים בדשבורד, להריץ אותו (`streamlit run dashboard.py`) ואת `node tools/screenshots.js`, ולעבור על הצילומים: בהיר וכהה, ‎1280px ו-375px, כל הלשוניות.
 - **קבצי ה-py הישנים בפורמט CRLF.** לערוך אותם בלי להמיר את סופי השורות, אחרת ה-diff מראה את כל הקובץ כשונה. קבצים חדשים הם LF.
 - **לא לשבור את ה-pipeline הקיים** (`partial_plot.py`). פיצ'רים חדשים (דשבורד, מפה) נכנסים כמודולים חדשים שקוראים את אותם נתונים.
 - לא להריץ איסוף מטלגרם (`COLLET = True`) בלי אישור המשתמש: זה דורש התחברות עם מספר טלפון וקוד אימות.
