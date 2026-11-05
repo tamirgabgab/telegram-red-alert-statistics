@@ -86,6 +86,15 @@ def margin_motifs(t):
     return ", ".join(f'url("data:image/svg+xml,{quote(svg)}")' for svg in (radar, arcs))
 
 
+# A shape per alert type, so the type never depends on color alone (color-blind readers, print).
+TYPE_SHAPES = {ROCKET: "●", UAV: "▲", INFILTRATION: "■", EARLY_WARNING: "◆", EARTHQUAKE: "▼"}
+OTHER_SHAPE = "✕"
+
+
+def type_shape(alert_type):
+    return TYPE_SHAPES.get(alert_type, OTHER_SHAPE)
+
+
 def type_color(theme, alert_type):
     return theme["types"].get(alert_type, theme["other"])
 
@@ -121,6 +130,32 @@ def global_css(t):
   }}
   .ra-chart-head p {{ margin: 2px 0 0; font-size: 0.82rem; line-height: 1.45; color: var(--ra-muted); }}
   .ra-chart-head [data-testid="stHeaderActionElements"] {{ display: none; }}
+  .ra-icon {{
+    font-family: "Material Symbols Rounded"; font-weight: 400; font-style: normal; font-size: 1.2em; line-height: 1;
+    display: inline-block; vertical-align: -0.2em; margin-inline-end: 6px; color: var(--ra-muted);
+    font-feature-settings: "liga"; -webkit-font-smoothing: antialiased; user-select: none;
+  }}
+  /* Tab icons: secondary gray, also on the active tab (red stays for the active label and underline) */
+  [data-testid="stTabs"] [role="tab"] span[role="img"] {{ color: var(--ra-muted); margin-inline-end: 2px; }}
+  .ra-tab-source {{
+    margin: 32px 0 0; padding-top: 10px; border-top: 1px solid var(--ra-border);
+    font-size: 0.75rem; line-height: 1.4; color: var(--ra-muted);
+  }}
+  /* ---- Sidebar: data coverage strip and the type legend -------------------------------- */
+  .ra-coverage {{ margin: 2px 0 14px; }}
+  .ra-coverage__title {{ font-size: 0.875rem; color: var(--ra-ink); margin-bottom: 6px; }}
+  .ra-coverage svg {{ display: block; width: 100%; height: 44px; }}
+  /* Time runs left to right, like every chart: the first date sits under the first bar */
+  .ra-coverage__axis {{
+    direction: ltr; display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--ra-muted); margin-top: 3px;
+    font-variant-numeric: tabular-nums;
+  }}
+  .ra-coverage__note {{ font-size: 0.75rem; color: var(--ra-muted); margin-top: 4px; line-height: 1.4; }}
+  .st-key-type_legend [data-testid="stButton"] button {{
+    width: 100%; justify-content: flex-start; min-height: 32px; padding: 2px 6px; gap: 8px;
+  }}
+  .st-key-type_legend [data-testid="stButton"] button p {{ font-size: 0.875rem; font-variant-numeric: tabular-nums; }}
+  .st-key-type_legend [data-testid="stButton"] button::before {{ font-size: 0.8rem; line-height: 1; flex: none; }}
   .ra-chart-foot {{ margin: -6px 0 8px; font-size: 0.75rem; line-height: 1.4; color: var(--ra-muted); }}
   /* Selection bar: the main controls, right under the header */
   .st-key-filterbar {{ padding: 4px 0 2px; }}
@@ -231,7 +266,7 @@ def global_css(t):
     display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 0.8rem; color: var(--ra-ink2);
     border: 1px solid var(--ra-border); border-radius: 999px; padding: 1px 10px;
   }}
-  .ra-tag i {{ width: 8px; height: 8px; border-radius: 50%; flex: none; }}
+  .ra-tag i {{ font-style: normal; font-size: 0.75rem; line-height: 1; flex: none; }}
 
   /* ---- KPI row: typographic, no boxes. Hairlines between cells ------------------------- */
   .ra-kpis {{
@@ -283,8 +318,9 @@ def global_css(t):
     .ra-kpi:nth-child(3) {{ border-inline-start: 0; padding-inline-start: 0; }}
     .ra-kpi:nth-child(n+3) {{ border-top: 1px solid var(--ra-border); }}
     .ra-feed li {{ grid-template-columns: minmax(0, 1fr) auto; padding: 10px 12px; }}
-    /* six tabs fit on a 375px screen */
+    /* six tabs fit on a 375px screen: text only */
     [data-testid="stTabs"] [role="tablist"] {{ gap: 8px; }}
+    [data-testid="stTabs"] [role="tab"] span[role="img"] {{ display: none !important; }}
     [data-testid="stTabs"] [role="tab"] p {{ font-size: 0.9rem; }}
     .ra-feed__where {{ grid-column: 1 / -1; grid-row: 2; }}
     .ra-kpi {{ padding: 12px 12px 10px; }}
@@ -382,11 +418,15 @@ def dots_path(x, y):
     return "".join(f"M{a:g} {b:g}h0" for a, b in zip(x, y))
 
 
-def locator_html(all_xy, selected_xy, label):
-    """Small silhouette of Israel made of every locality (gray) with the selected places in brand red."""
+def locator_html(all_xy, selected_xy, label, faint=False):
+    """Small silhouette of Israel made of every locality (gray) with the selected places in brand red.
+
+    faint: the highlighted dots are a light tint (used for "localities with alerts" when nothing is picked).
+    """
     sel = ""
     if len(selected_xy[0]):
-        sel = (f'<path d="{dots_path(*selected_xy)}" stroke="var(--ra-brand)" stroke-width="4.5" '
+        look = 'stroke-opacity="0.45" stroke-width="2"' if faint else 'stroke-width="4.5"'
+        sel = (f'<path d="{dots_path(*selected_xy)}" stroke="var(--ra-brand)" {look} '
                f'stroke-linecap="round" vector-effect="non-scaling-stroke"/>')
     return _flatten(f"""
 <figure class="ra-locator" role="img" aria-label="{escape(label)}">
@@ -469,13 +509,64 @@ def ratio_bar_html(ratio):
     return f'<div class="ra-ratio"><i style="width:{max(0.0, min(1.0, ratio)) * 100:.1f}%"></i></div>'
 
 
-def chart_head_html(title, subtitle=""):
+def icon_html(name):
+    """A Material Symbols glyph (the font ships with Streamlit), decorative."""
+    return f'<span class="ra-icon" aria-hidden="true">{escape(name)}</span>'
+
+
+def chart_head_html(title, subtitle="", icon=None):
     sub = f"<p>{escape(subtitle)}</p>" if subtitle else ""
-    return f'<div class="ra-chart-head"><h3>{escape(title)}</h3>{sub}</div>'
+    mark = icon_html(icon) if icon else ""
+    return f'<div class="ra-chart-head"><h3>{mark}{escape(title)}</h3>{sub}</div>'
+
+
+def tab_source_html(text):
+    """The source line, once at the end of a tab."""
+    return f'<div class="ra-tab-source">{escape(text)}</div>'
 
 
 def chart_foot_html(text):
     return f'<div class="ra-chart-foot">{escape(text)}</div>'
+
+
+def coverage_html(values, in_range, on_color, off_color, first, last, note=""):
+    """Daily bars over the whole data period; days inside the selected range in ``on_color``.
+
+    values: daily counts; in_range: booleans of the same length; first/last: dates for the axis.
+    """
+    n = len(values)
+    vmax = max(max(values, default=0), 1)
+    w = 4.0
+    bars = {True: [], False: []}
+    for i, (v, on) in enumerate(zip(values, in_range)):
+        if v > 0:
+            h = max(1.5, 40 * (v / vmax) ** 0.5)  # sqrt: one huge day must not flatten the rest
+            bars[bool(on)].append(f"M{i * w + 0.5:g} 44v-{h:.1f}h{w - 1:g}v{h:.1f}z")
+    svg = (f'<svg viewBox="0 0 {max(n, 1) * w:g} 44" preserveAspectRatio="none" aria-hidden="true" focusable="false">'
+           f'<path d="M0 43.5H{max(n, 1) * w:g}" stroke="{off_color}" stroke-width="1" vector-effect="non-scaling-stroke"/>'
+           f'<path d="{"".join(bars[False])}" fill="{off_color}"/><path d="{"".join(bars[True])}" fill="{on_color}"/></svg>')
+    note_html = f'<div class="ra-coverage__note">{escape(note)}</div>' if note else ""
+    return _flatten(f"""
+<div class="ra-coverage" role="img" aria-label="כיסוי הנתונים: התרעות בכל יום, הטווח שנבחר מודגש">
+<div class="ra-coverage__title">כיסוי הנתונים</div>
+{svg}
+<div class="ra-coverage__axis"><bdi dir="ltr">{first:%d/%m/%Y}</bdi><bdi dir="ltr">{last:%d/%m/%Y}</bdi></div>
+{note_html}
+</div>
+""")
+
+
+def legend_css(entries):
+    """Per-row shape and color for the sidebar type legend (buttons keyed legend_<i>).
+
+    entries: list of (key, shape, color, active). Inactive rows are dimmed.
+    """
+    rules = []
+    for key, shape, color, active in entries:
+        rules.append(f'.st-key-{key} button::before {{ content: "{shape}"; color: {color}; }}')
+        if not active:
+            rules.append(f".st-key-{key} button {{ opacity: 0.5; }}")
+    return "<style>" + " ".join(rules) + "</style>"
 
 
 def notice_html(title, body):
@@ -513,8 +604,8 @@ def feed_html(barrages, color_of, label_of):
         zones = list(b.zones)
         where = escape(", ".join(zones[:3])) + (f" ועוד {len(zones) - 3}" if len(zones) > 3 else "")
         n = f"{b.localities:,} יישובים" if b.localities > 1 else "יישוב אחד"
-        tag = (f'<span class="ra-tag"><i style="background:{color_of(b.alert_type)}"></i>'
-               f'{escape(label_of(b.alert_type))}</span>')
+        tag = (f'<span class="ra-tag"><i style="color:{color_of(b.alert_type)}" aria-hidden="true">'
+               f'{type_shape(b.alert_type)}</i>{escape(label_of(b.alert_type))}</span>')
         items.append(f'<li><div class="ra-feed__time"><bdi dir="ltr">{when}</bdi>{span}</div>'
                      f'<div class="ra-feed__where">{where}<small>{n}</small></div>{tag}</li>')
     return f'<ul class="ra-feed" aria-label="מטחים אחרונים">{"".join(items)}</ul>'
