@@ -106,6 +106,7 @@ __12:55:__
   - צבע = סוג ההתרעה הדומיננטי ביישוב. עוצמת הצבע = כמות ההתרעות, בסקאלת שורש ריבועי. יישובים בלי התרעות באפור.
   - שמות יישובים שלא נמצאים בגאו מוסיפים ל-`ALIASES` ב-`map_data.py`. הבדיקה `test_all_current_dataset_localities_are_matched` נכשלת אם יש יישוב בלי מיקום.
   - הקרדיט לנתוני הגאו חייב להישאר ב-README וב-`data/geo/NOTICE.md`.
+- **בדיקת לשוניות עצלות ב-`AppTest`:** להריץ עם `DASHBOARD_ALL_TABS=1`, אחרת המפה והאזורים לא נבנים בבדיקה.
 - **בדיקת המפה בצילום מסך בסביבה הזו:** אריחי המפה (cartocdn) חסומים ברשת, לכן מריצים עם `MAP_STYLE=white-bg`. כרום headless צריך WebGL תוכנתי: `--use-angle=swiftshader --enable-unsafe-swiftshader`.
 
 ### אבטחה
