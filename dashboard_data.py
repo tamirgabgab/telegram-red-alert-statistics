@@ -65,6 +65,25 @@ def barrage_ids(df, gap_minutes=BARRAGE_GAP_MIN):
     return pd.Series(ids.reindex(keys).to_numpy(), index=df.index, name="barrage")
 
 
+def filter_places(df, zones=None, cities=None):
+    """Rows in any of the chosen zones OR cities (one combined place picker). Nothing chosen = everything."""
+    if not zones and not cities:
+        return df
+    mask = pd.Series(False, index=df.index)
+    if zones:
+        mask |= df["zone"].isin(zones)
+    if cities:
+        mask |= df["city"].isin(cities)
+    return df[mask]
+
+
+def city_zones(df):
+    """Locality -> its most common zone (for labelling localities in the place picker)."""
+    if df.empty:
+        return {}
+    return df.groupby("city")["zone"].agg(lambda z: z.value_counts().index[0]).to_dict()
+
+
 def apply_mode(df, mode, extra_keys=()):
     """Collapse rows to the counting unit of the mode.
 
@@ -228,3 +247,169 @@ def busiest(series_or_frame):
 
 def as_int_matrix(m):
     return m.to_numpy(dtype=np.int64)
+
+
+# --------------------------------------------------------------------------------------
+# Deeper statistics (all computed from the Telegram rows only: locality, time, alert type)
+# --------------------------------------------------------------------------------------
+NIGHT_START, NIGHT_END = 22, 6  # night = 22:00-05:59
+
+
+def is_night(ts):
+    h = ts.dt.hour
+    return (h >= NIGHT_START) | (h < NIGHT_END)
+
+
+def night_share(df, mode=MODE_LOCALITIES):
+    """Share (0..1) of the counted alerts that fell at night; None for an empty frame."""
+    d = apply_mode(df, mode)
+    if d.empty:
+        return None
+    return float(is_night(d["timestamp"]).mean())
+
+
+def alert_moments(df, per_locality=False):
+    """Moments to measure gaps between, as a frame of start/end, oldest first.
+
+    per_locality=True (one locality chosen): every alert minute of that locality.
+    Otherwise: every barrage in the selection (alerts of one type <= BARRAGE_GAP_MIN apart).
+    """
+    if df.empty:
+        return pd.DataFrame(columns=["start", "end"])
+    if per_locality:
+        ts = pd.Series(sorted(df["timestamp"].unique()))
+        return pd.DataFrame({"start": ts, "end": ts})
+    b = barrage_table(df)
+    return b[["start", "end"]].sort_values("start").reset_index(drop=True)
+
+
+def gaps(moments):
+    """Quiet time between consecutive moments (next start - latest end so far), never negative."""
+    if len(moments) < 2:
+        return pd.Series(dtype="timedelta64[ns]")
+    latest_end = moments["end"].cummax().shift()
+    g = (moments["start"] - latest_end).iloc[1:]
+    return g.clip(lower=pd.Timedelta(0)).reset_index(drop=True)
+
+
+def gap_stats(df, per_locality=False):
+    """Median gap, longest gap (with when it started/ended) and the number of moments."""
+    m = alert_moments(df, per_locality)
+    g = gaps(m)
+    if g.empty:
+        return {"moments": len(m), "median": None, "longest": None, "longest_from": None, "longest_to": None,
+                "gaps": g}
+    i = int(g.values.argmax())
+    latest_end = m["end"].cummax()
+    return {
+        "moments": len(m),
+        "median": g.median(),
+        "longest": g.iloc[i],
+        "longest_from": latest_end.iloc[i],
+        "longest_to": m["start"].iloc[i + 1],
+        "gaps": g,
+    }
+
+
+def format_duration(td):
+    """Hebrew, rounded to what matters: minutes under an hour, hours under two days, else days."""
+    if td is None or pd.isna(td):
+        return "-"
+    minutes = int(round(pd.Timedelta(td).total_seconds() / 60))
+    if minutes < 1:
+        return "פחות מדקה"
+    if minutes < 60:
+        return "דקה" if minutes == 1 else f"{minutes} דקות"
+    hours = minutes / 60
+    if hours < 48:
+        h = round(hours, 1)
+        return "שעה" if h == 1 else f"{h:g} שעות"
+    days = round(hours / 24, 1)
+    return f"{days:g} ימים"
+
+
+def records(df, mode=MODE_LOCALITIES, start=None, end=None):
+    """Plain facts about the selection: busiest day and hour, largest single minute,
+    the zone with the most alerts in one day, and the longest run of days without alerts."""
+    d = apply_mode(df, mode)
+    if d.empty:
+        return {}
+    out = {}
+    by_day = d.groupby(d["timestamp"].dt.normalize()).size()
+    out["busiest_day"] = (by_day.idxmax(), int(by_day.max()))
+    by_hour = d.groupby(d["timestamp"].dt.floor("1h")).size()
+    out["busiest_hour"] = (by_hour.idxmax(), int(by_hour.max()))
+    per_minute = df.groupby("timestamp")["city"].nunique()
+    out["largest_minute"] = (per_minute.idxmax(), int(per_minute.max()))
+    if df["zone"].nunique() > 1:
+        dz = apply_mode(df, mode, extra_keys=("zone",))
+        zd = dz.groupby([dz["zone"], dz["timestamp"].dt.normalize()]).size()
+        (zone, day), n = zd.idxmax(), int(zd.max())
+        out["worst_zone_day"] = (zone, day, n)
+    lo = pd.Timestamp(start) if start is not None else by_day.index.min()
+    hi = pd.Timestamp(end) if end is not None else by_day.index.max()
+    days = by_day.reindex(pd.date_range(lo, hi, freq="1D"), fill_value=0)
+    quiet = (days == 0).astype(int)
+    run_id = (quiet != quiet.shift()).cumsum()
+    runs = quiet.groupby(run_id).agg(["sum", "size"])
+    runs = runs[runs["sum"] > 0]
+    if not runs.empty:
+        best = runs["size"].idxmax()
+        idx = days.index[run_id == best]
+        out["longest_quiet"] = (int(runs.loc[best, "size"]), idx.min(), idx.max())
+    else:
+        out["longest_quiet"] = (0, None, None)
+    return out
+
+
+def calendar_matrix(df, mode=MODE_LOCALITIES, start=None, end=None):
+    """Weeks (columns, Sunday-start, oldest first) x weekdays (rows Sunday..Saturday) of daily counts.
+    Days outside [start, end] are NaN so they render empty."""
+    d = apply_mode(df, mode)
+    lo = pd.Timestamp(start) if start is not None else d["timestamp"].min().normalize()
+    hi = pd.Timestamp(end) if end is not None else d["timestamp"].max().normalize()
+    days = pd.date_range(lo, hi, freq="1D")
+    counts = d.groupby(d["timestamp"].dt.normalize()).size().reindex(days, fill_value=0)
+    week = days - pd.to_timedelta((days.day_of_week + 1) % 7, unit="D")  # Sunday of that week
+    frame = pd.DataFrame({"week": week, "wd": days.day_of_week, "n": counts.values})
+    m = frame.pivot(index="wd", columns="week", values="n").reindex(WEEKDAY_ORDER)
+    m.index = [WEEKDAYS_HE[i] for i in m.index]
+    return m
+
+
+def zone_table(df, mode=MODE_LOCALITIES, start=None, end=None):
+    """Per zone: counted alerts, localities hit, night share, median gap between barrages,
+    most common alert type and the daily series (for a sparkline). Sorted by count."""
+    cols = ["zone", "total", "localities", "night_share", "median_gap", "top_type", "daily"]
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    lo = pd.Timestamp(start) if start is not None else df["timestamp"].min().normalize()
+    hi = pd.Timestamp(end) if end is not None else df["timestamp"].max().normalize()
+    days = pd.date_range(lo, hi, freq="1D")
+    rows = []
+    for zone, g in df.groupby("zone"):
+        d = apply_mode(g, mode)
+        daily = d.groupby(d["timestamp"].dt.normalize()).size().reindex(days, fill_value=0)
+        st = gap_stats(g)
+        rows.append({
+            "zone": zone, "total": int(len(d)), "localities": int(g["city"].nunique()),
+            "night_share": float(is_night(d["timestamp"]).mean()),
+            "median_gap": st["median"], "top_type": g["alert_type"].value_counts().index[0],
+            "daily": daily.astype(int).tolist(),
+        })
+    return pd.DataFrame(rows, columns=cols).sort_values("total", ascending=False).reset_index(drop=True)
+
+
+GAP_BINS = [  # (upper bound in minutes, label)
+    (5, "עד 5 דקות"), (15, "5–15 דקות"), (30, "15–30 דקות"), (60, "30–60 דקות"),
+    (180, "1–3 שעות"), (360, "3–6 שעות"), (720, "6–12 שעות"), (1440, "12–24 שעות"), (float("inf"), "יותר מיממה"),
+]
+
+
+def gap_histogram(gap_series):
+    """Counts of gaps per duration bin (labels in GAP_BINS order, empty bins kept)."""
+    minutes = gap_series.dt.total_seconds() / 60 if len(gap_series) else pd.Series(dtype=float)
+    labels = [lab for _, lab in GAP_BINS]
+    edges = [-0.001] + [hi for hi, _ in GAP_BINS]
+    binned = pd.cut(minutes, bins=edges, labels=labels, right=True)
+    return binned.value_counts().reindex(labels, fill_value=0)

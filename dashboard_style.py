@@ -11,6 +11,8 @@ from html import escape
 from alerts_parser import EARLY_WARNING, EARTHQUAKE, INFILTRATION, ROCKET, UAV
 
 FONT = '"Heebo", system-ui, -apple-system, "Segoe UI", Arial, sans-serif'
+# Headings and big numbers: a more technical, institutional voice; body text stays Heebo.
+DISPLAY = '"IBM Plex Sans Hebrew", "Heebo", system-ui, sans-serif'
 
 # Light and dark are each selected, not flipped. Text tokens keep >= 4.5:1 on their surface.
 THEMES = {
@@ -75,6 +77,7 @@ def global_css(t):
     --ra-brand: {t['brand']}; --ra-brand-strong: {t['brand_strong']}; --ra-brand-tint: {t['brand_tint']};
     --ra-hero: {t['hero']}; --ra-hero-ink: {t['hero_ink']};
     --ra-radius: 12px;
+    --ra-display: {DISPLAY};
   }}
 
   /* RTL only on content; the app shell (sidebar drawer, header) stays LTR so it collapses correctly */
@@ -85,12 +88,32 @@ def global_css(t):
   [data-testid="stDateInput"] > div, [data-testid="stDateInput"] > div * {{ direction: ltr; }}
   [data-testid="stButtonGroup"] {{ direction: ltr; justify-content: flex-end; }}
   [data-testid="stMetricValue"] {{ font-variant-numeric: tabular-nums; }}
-  .block-container {{ padding-top: 1.25rem; }}
+  .block-container {{ padding-top: 1.25rem; max-width: 1240px; }}
 
-  /* Charts sit on a framed card; the figure itself is transparent */
-  [data-testid="stPlotlyChart"] {{
-    background: var(--ra-card); border: 1px solid var(--ra-border); border-radius: var(--ra-radius);
-    padding: 0; overflow: hidden;  /* Plotly sizes the SVG to this box; inner spacing comes from the figure margins */
+  /* ---- Charts: no box. A short title and subtitle above, a source line below ------------ */
+  .ra-chart-head {{ margin: 28px 0 2px; }}
+  .ra-chart-head h3 {{
+    font-family: var(--ra-display); font-size: 1.1rem; font-weight: 600; line-height: 1.35; color: var(--ra-ink);
+    margin: 0; padding: 0;
+  }}
+  .ra-chart-head p {{ margin: 2px 0 0; font-size: 0.82rem; line-height: 1.45; color: var(--ra-muted); }}
+  .ra-chart-head [data-testid="stHeaderActionElements"] {{ display: none; }}
+  .ra-chart-foot {{ margin: -6px 0 8px; font-size: 0.75rem; line-height: 1.4; color: var(--ra-muted); }}
+  /* Selection bar: the main controls, right under the header */
+  .st-key-filterbar {{ padding: 4px 0 2px; }}
+  .st-key-reset_top button {{ color: var(--ra-brand-strong); }}
+  /* Facts list (records): label / value / detail in a hairline grid, no boxes */
+  .ra-facts {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 28px; margin: 4px 0 8px; }}
+  .ra-fact {{ border-top: 1px solid var(--ra-border); padding: 12px 0 10px; min-width: 0; }}
+  .ra-fact__label {{ font-size: 0.8rem; color: var(--ra-muted); line-height: 1.4; }}
+  .ra-fact__value {{
+    font-family: var(--ra-display); font-size: 1.3rem; font-weight: 600; color: var(--ra-ink); line-height: 1.3;
+    margin: 4px 0 2px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+  }}
+  .ra-fact__sub {{ font-size: 0.8rem; color: var(--ra-ink2); line-height: 1.45; }}
+  .ra-rule {{ border: 0; border-top: 1px solid var(--ra-border); margin: 28px 0 4px; }}
+  .ra-group-title {{
+    font-family: var(--ra-display); font-size: 1.35rem; font-weight: 600; color: var(--ra-ink); margin: 8px 0 0;
   }}
 
   /* ---- Header band ---------------------------------------------------------------- */
@@ -110,7 +133,7 @@ def global_css(t):
   .ra-hero__brand {{ display: flex; align-items: center; gap: 14px; }}
   .ra-hero__brand svg {{ flex: none; }}
   .ra-hero h1 {{
-    font-family: {FONT}; font-weight: 700; font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2rem); line-height: 1.2;
+    font-family: {DISPLAY}; font-weight: 700; font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2rem); line-height: 1.2;
     color: var(--ra-hero-ink); margin: 0; padding: 0; letter-spacing: 0;
   }}
   .ra-hero__sub {{ margin: 4px 0 0; font-size: 0.95rem; line-height: 1.5; color: rgba(255,255,255,0.88); }}
@@ -167,21 +190,24 @@ def global_css(t):
   }}
   .ra-tag i {{ width: 8px; height: 8px; border-radius: 50%; flex: none; }}
 
-  /* ---- KPI cards ------------------------------------------------------------------ */
-  .ra-kpis {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 8px; }}
-  @media (min-width: 1600px) {{ .ra-kpis {{ grid-template-columns: repeat(6, minmax(0, 1fr)); }} }}
-  .ra-kpi {{
-    background: var(--ra-card); border: 1px solid var(--ra-border); border-radius: var(--ra-radius);
-    padding: 14px 16px; min-width: 0;
+  /* ---- KPI row: typographic, no boxes. Hairlines between cells ------------------------- */
+  .ra-kpis {{
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 4px 0 8px;
+    border-top: 1px solid var(--ra-border); border-bottom: 1px solid var(--ra-border);
   }}
-  .ra-kpi--primary {{ border-inline-start: 4px solid var(--ra-brand); }}
-  .ra-kpi__label {{ font-size: 0.85rem; line-height: 1.4; color: var(--ra-muted); margin: 0; }}
+  .ra-kpi {{ padding: 16px 20px 14px; min-width: 0; border-inline-start: 1px solid var(--ra-border); }}
+  .ra-kpi:first-child {{ border-inline-start: 0; padding-inline-start: 0; }}
+  .ra-kpi__label {{ font-size: 0.82rem; line-height: 1.4; color: var(--ra-muted); }}
   .ra-kpi__value {{
-    font-size: 1.75rem; font-weight: 700; line-height: 1.25; color: var(--ra-ink); margin: 4px 0 2px;
-    font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+    font-family: var(--ra-display); font-size: 2.25rem; font-weight: 600; line-height: 1.15; color: var(--ra-ink);
+    margin: 6px 0 4px; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; overflow-wrap: anywhere;
   }}
-  .ra-kpi__value--text {{ font-size: 1.25rem; padding-top: 6px; }}
-  .ra-kpi__sub {{ font-size: 0.8rem; line-height: 1.45; color: var(--ra-ink2); margin: 0; }}
+  .ra-kpi__value--text {{ font-size: 1.25rem; padding-top: 8px; padding-bottom: 6px; white-space: nowrap; }}
+  .ra-kpi__sub {{ font-size: 0.8rem; line-height: 1.45; color: var(--ra-ink2); }}
+  .ra-kpi__viz {{ margin-top: 8px; height: 28px; }}
+  .ra-kpi__viz svg {{ display: block; width: 100%; max-width: 160px; height: 28px; }}
+  .ra-ratio {{ height: 6px; max-width: 160px; border-radius: 3px; background: var(--ra-surface); overflow: hidden; margin-top: 18px; }}
+  .ra-ratio i {{ display: block; height: 100%; background: var(--ra-brand); }}
 
   /* ---- Notice (neutral replacement for st.info) -------------------------------------- */
   .ra-notice {{
@@ -206,16 +232,20 @@ def global_css(t):
   [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {{ color: var(--ra-muted); }}
   /* Segmented controls wrap instead of running off narrow screens */
   [data-testid="stButtonGroup"], [data-testid="stButtonGroup"] > div {{ flex-wrap: wrap; }}
+  /* Button groups stay LTR, but each Hebrew label reads in its own direction ("30 ימים", not "ימים 30") */
+  [data-testid="stButtonGroup"] button p {{ unicode-bidi: plaintext; }}
 
   @media (max-width: 640px) {{
-    .ra-kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
+    .ra-kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    .ra-kpi:nth-child(3) {{ border-inline-start: 0; padding-inline-start: 0; }}
+    .ra-kpi:nth-child(n+3) {{ border-top: 1px solid var(--ra-border); }}
     .ra-feed li {{ grid-template-columns: minmax(0, 1fr) auto; padding: 10px 12px; }}
     /* six tabs fit on a 375px screen */
     [data-testid="stTabs"] [role="tablist"] {{ gap: 8px; }}
     [data-testid="stTabs"] [role="tab"] p {{ font-size: 0.9rem; }}
     .ra-feed__where {{ grid-column: 1 / -1; grid-row: 2; }}
-    .ra-kpi {{ padding: 12px; }}
-    .ra-kpi__value {{ font-size: 1.4rem; }}
+    .ra-kpi {{ padding: 12px 12px 10px; }}
+    .ra-kpi__value {{ font-size: 1.6rem; }}
     .ra-kpi__value--text {{ font-size: 1.05rem; }}
     /* Leave room for the fixed app header (sidebar toggle) on narrow screens */
     .block-container {{ padding-top: 3.75rem; }}
@@ -302,20 +332,67 @@ INFO_ICON = (
 )
 
 
-def kpi_cards_html(cards):
-    """cards: list of dicts with label, value, sub, and optional primary / text (long word value) / ltr."""
+def kpi_row_html(items):
+    """Typographic KPI row. items: dicts with label, value, and optional sub, viz (inline SVG/HTML),
+    ltr (isolate the value LTR), text (a word rather than a number)."""
     out = []
-    for c in cards:
-        cls = "ra-kpi" + (" ra-kpi--primary" if c.get("primary") else "")
+    for c in items:
         vcls = "ra-kpi__value" + (" ra-kpi__value--text" if c.get("text") else "")
         value = escape(str(c["value"]))
         if c.get("ltr"):
             value = f'<bdi dir="ltr">{value}</bdi>'
         sub = f'<div class="ra-kpi__sub">{escape(c["sub"])}</div>' if c.get("sub") else ""
+        viz = f'<div class="ra-kpi__viz" aria-hidden="true">{c["viz"]}</div>' if c.get("viz") else ""
         # divs, not <p>: Streamlit's markdown styles for p would override the sizes
-        out.append(f'<div class="{cls}"><div class="ra-kpi__label">{escape(c["label"])}</div>'
-                   f'<div class="{vcls}">{value}</div>{sub}</div>')
+        out.append(f'<div class="ra-kpi"><div class="ra-kpi__label">{escape(c["label"])}</div>'
+                   f'<div class="{vcls}">{value}</div>{sub}{viz}</div>')
     return f'<section class="ra-kpis" aria-label="מדדים עיקריים">{"".join(out)}</section>'
+
+
+# Detail cards (map locality panel) keep the same typographic row.
+kpi_cards_html = kpi_row_html
+
+
+def sparkline_svg(values, color, width=160, height=28):
+    """Tiny line + soft area, no axes. Time runs left to right like every other time axis."""
+    vals = [float(v) for v in values]
+    if len(vals) < 2 or max(vals) <= 0:
+        return ""
+    top = max(vals)
+    step = width / (len(vals) - 1)
+    pts = [(i * step, height - 2 - (v / top) * (height - 4)) for i, v in enumerate(vals)]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = f"0,{height} {line} {width},{height}"
+    return (f'<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" focusable="false">'
+            f'<polygon points="{area}" fill="{color}" opacity="0.12"/>'
+            f'<polyline points="{line}" fill="none" stroke="{color}" stroke-width="1.6" '
+            f'stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>')
+
+
+def hour_bars_svg(counts, peak, color, rest, width=160, height=28):
+    """24 mini bars (00..23, left to right); the peak hour in the accent color, the rest muted."""
+    vals = [float(v) for v in counts]
+    top = max(vals) if vals and max(vals) > 0 else 1
+    bw = width / 24
+    bars = []
+    for h, v in enumerate(vals):
+        bh = max(1.5, (v / top) * height)
+        bars.append(f'<rect x="{h * bw + 0.6:.1f}" y="{height - bh:.1f}" width="{bw - 1.2:.1f}" height="{bh:.1f}" '
+                    f'rx="1" fill="{color if h == peak else rest}"/>')
+    return f'<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" focusable="false">{"".join(bars)}</svg>'
+
+
+def ratio_bar_html(ratio):
+    return f'<div class="ra-ratio"><i style="width:{max(0.0, min(1.0, ratio)) * 100:.1f}%"></i></div>'
+
+
+def chart_head_html(title, subtitle=""):
+    sub = f"<p>{escape(subtitle)}</p>" if subtitle else ""
+    return f'<div class="ra-chart-head"><h3>{escape(title)}</h3>{sub}</div>'
+
+
+def chart_foot_html(text):
+    return f'<div class="ra-chart-foot">{escape(text)}</div>'
 
 
 def notice_html(title, body):
@@ -358,3 +435,23 @@ def feed_html(barrages, color_of, label_of):
         items.append(f'<li><div class="ra-feed__time"><bdi dir="ltr">{when}</bdi>{span}</div>'
                      f'<div class="ra-feed__where">{where}<small>{n}</small></div>{tag}</li>')
     return f'<ul class="ra-feed" aria-label="מטחים אחרונים">{"".join(items)}</ul>'
+
+
+def facts_html(items, label="שיאים"):
+    """A hairline grid of plain facts. items: dicts with label, value, optional sub and ltr."""
+    out = []
+    for c in items:
+        value = escape(str(c["value"]))
+        if c.get("ltr"):
+            value = f'<bdi dir="ltr">{value}</bdi>'
+        sub = f'<div class="ra-fact__sub">{escape(c["sub"])}</div>' if c.get("sub") else ""
+        out.append(f'<div class="ra-fact"><div class="ra-fact__label">{escape(c["label"])}</div>'
+                   f'<div class="ra-fact__value">{value}</div>{sub}</div>')
+    return f'<section class="ra-facts" aria-label="{escape(label)}">{"".join(out)}</section>'
+
+
+def with_alpha(hex_color, alpha):
+    """'#RRGGBB' -> 'rgba(r,g,b,a)' for translucent fills."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"

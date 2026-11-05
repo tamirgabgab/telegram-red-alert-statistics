@@ -9,6 +9,7 @@ from datetime import timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
 import dashboard_data as dd
@@ -59,10 +60,9 @@ def seq_scale():
 def style(fig, height=380, legend=True):
     fig.update_layout(
         height=height,
-        margin=dict(l=14, r=16, t=44, b=12),
+        margin=dict(l=8, r=8, t=10, b=8),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",  # the card behind it carries the surface
         font=dict(family=FONT, color=T["ink2"], size=13),
-        title=dict(xref="paper", x=1, xanchor="right", font=dict(color=T["ink"], size=15)),  # RTL: title on the right
         hoverlabel=dict(font_family=FONT, bgcolor=T["card"], font_color=T["ink"], bordercolor=T["axis"]),
         showlegend=legend,
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0, title_text=""),
@@ -70,13 +70,19 @@ def style(fig, height=380, legend=True):
     )
     axis = dict(automargin=True, gridcolor=T["grid"], linecolor=T["axis"], zerolinecolor=T["axis"], tickfont=dict(color=T["muted"]),
                 title_font=dict(color=T["ink2"]))
-    fig.update_xaxes(**axis)
-    fig.update_yaxes(**axis)
+    fig.update_xaxes(**axis, showgrid=False)  # horizontal gridlines only
+    fig.update_yaxes(**axis, showline=False)
     return fig
 
 
-def show(fig):
-    st.plotly_chart(fig, width="stretch", config=PLOTLY_CONFIG, theme=None)
+def show(fig, title=None, subtitle="", note=None, fixed_width=False):
+    """A chart block: short title and subtitle above, the figure, and a uniform source line below.
+    fixed_width keeps the figure's own width (e.g. a calendar with square cells) instead of stretching it."""
+    if title:
+        st.markdown(ds.chart_head_html(title, subtitle), unsafe_allow_html=True)
+    st.plotly_chart(fig, width="content" if fixed_width else "stretch", config=PLOTLY_CONFIG, theme=None)
+    foot = f"מקור: ערוץ הטלגרם צופר - צבע אדום. עודכן {SOURCE_UPDATED}."
+    st.markdown(ds.chart_foot_html(foot + (f" {note}" if note else "")), unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------------------------------
@@ -109,49 +115,55 @@ if alerts.empty:
     st.stop()
 
 data_min = alerts["timestamp"].min().date()
+SOURCE_UPDATED = f'{alerts["timestamp"].max():%d/%m/%Y %H:%M}'
 data_max = alerts["timestamp"].max().date()
 
 # --------------------------------------------------------------------------------------
-# Sidebar filters
+# Filters. The main choices (place, type, period) sit in a bar under the header; the sidebar keeps
+# only advanced options (count mode). Places: one picker for zones and localities ("z|name" / "c|name").
 # --------------------------------------------------------------------------------------
 MODES = {"יישובים": dd.MODE_LOCALITIES, "אירועים": dd.MODE_EVENTS, "מטחים": dd.MODE_BARRAGES}
 UNITS = {dd.MODE_LOCALITIES: "התרעות ביישובים", dd.MODE_EVENTS: "אירועי התרעה", dd.MODE_BARRAGES: "מטחים"}
-PRESETS = {"כל התקופה": None, "7 הימים האחרונים": 7, "30 הימים האחרונים": 30, "90 הימים האחרונים": 90}
+ALL_TIME, CUSTOM = "הכל", "מותאם"
+PRESETS = {ALL_TIME: None, "7 ימים": 7, "30 ימים": 30, "90 ימים": 90, CUSTOM: "custom"}
+CITY_ZONE = dd.city_zones(alerts)
+
+
+def place_label(key):
+    kind, name = key.split("|", 1)
+    if kind == "z":
+        return f"אזור {name}"
+    zone = CITY_ZONE.get(name)
+    return f"{name} ({zone})" if zone else name
 
 
 def apply_preset():
-    days = PRESETS[st.session_state["preset"]]
+    choice = st.session_state.get("preset") or ALL_TIME
+    st.session_state["preset"] = choice
+    days = PRESETS[choice]
+    if days == "custom":
+        return  # keep the current range; the date field appears
     lo = data_min if days is None else max(data_min, data_max - timedelta(days=days - 1))
     st.session_state["date_range"] = (lo, data_max)
 
 
 def reset_filters():
-    for key in ("types", "zones", "cities"):
-        st.session_state[key] = []
-    st.session_state["preset"] = "כל התקופה"
+    st.session_state["place_sel"] = []
+    st.session_state["types"] = []
+    st.session_state["preset"] = ALL_TIME
     apply_preset()
+
+
+def set_places(zones=(), cities=()):
+    st.session_state["place_sel"] = [f"z|{z}" for z in zones] + [f"c|{c}" for c in cities]
 
 
 if "date_range" not in st.session_state:
     st.session_state["date_range"] = (data_min, data_max)
+st.session_state.setdefault("preset", ALL_TIME)
 
 with st.sidebar:
-    st.header("סינון")
-    st.selectbox("טווח מהיר", list(PRESETS), key="preset", on_change=apply_preset,
-                 help="הימים האחרונים נספרים מהיום האחרון שיש עליו נתונים")
-    picked = st.date_input("טווח תאריכים", key="date_range", min_value=data_min, max_value=data_max,
-                           format="DD/MM/YYYY")
-    start, end = (picked[0], picked[1]) if isinstance(picked, (list, tuple)) and len(picked) == 2 else (data_min, data_max)
-
-    present_types = [t for t in TYPE_ORDER if t in set(alerts["alert_type"])]
-    types = st.multiselect("סוג התרעה", present_types, key="types", format_func=dd.type_label,
-                           placeholder="כל הסוגים")
-
-    zone_options = sorted(alerts["zone"].unique())
-    zones = st.multiselect("אזור", zone_options, key="zones", placeholder="כל האזורים")
-    city_pool = alerts if not zones else alerts[alerts["zone"].isin(zones)]
-    cities = st.multiselect("יישוב", sorted(city_pool["city"].unique()), key="cities", placeholder="כל היישובים")
-
+    st.header("אפשרויות")
     mode_label = st.radio(
         "אופן ספירה", list(MODES), horizontal=True,
         help="יישובים: כל יישוב שהופעלה בו התרעה נספר בנפרד.\n\n"
@@ -159,9 +171,6 @@ with st.sidebar:
              f"מטחים: התרעות מאותו סוג בהפרש של עד {dd.BARRAGE_GAP_MIN} דקות נספרות כמטח אחד.",
     )
     mode = MODES[mode_label]
-
-    st.button("ניקוי סינון", on_click=reset_filters, width="stretch")
-
     st.divider()
     st.markdown(ds.sidebar_meta_html(data_min, data_max, len(alerts)), unsafe_allow_html=True)
     sources = alerts["source"].value_counts()
@@ -170,65 +179,85 @@ with st.sidebar:
         if DEV:
             st.caption("לאיסוף כל סוגי ההתרעות: `python collect_alerts.py --since 2026-02-26`")
 
-df = dd.filter_alerts(alerts, start, end, types, zones, cities)
-unit = UNITS[mode]
-
-# --------------------------------------------------------------------------------------
-# Header + KPIs
-# --------------------------------------------------------------------------------------
-scope = "כל הארץ"
-if cities:
-    scope = ", ".join(cities[:3]) + (f" ועוד {len(cities) - 3}" if len(cities) > 3 else "")
-elif zones:
-    scope = ", ".join(zones[:3]) + (f" ועוד {len(zones) - 3}" if len(zones) > 3 else "")
 data_until = alerts["timestamp"].max()
-chips = [(scope, "plain"), (f"{start:%d/%m/%Y} – {end:%d/%m/%Y}", "ltr")]
-if types:
-    chips.append((", ".join(dd.type_label(t) for t in types), "plain"))
+chips = []
 if mode != dd.MODE_LOCALITIES:
     chips.append((f"ספירה לפי {mode_label}", "plain"))
 chips.append((f"הנתונים מעודכנים עד {data_until:%d/%m/%Y %H:%M}", "status"))
 st.markdown(ds.hero_html(TITLE, SUBTITLE, chips), unsafe_allow_html=True)
 
-# On narrow screens the sidebar is closed: the chips show the active filter, and this clears it.
-filtered = bool(types or zones or cities) or (start, end) != (data_min, data_max)
+# --- Selection bar ---------------------------------------------------------------------
+zone_keys = [f"z|{z}" for z in sorted(alerts["zone"].unique()) if z]
+city_keys = [f"c|{c}" for c in sorted(alerts["city"].unique()) if c]
+present_types = [t for t in TYPE_ORDER if t in set(alerts["alert_type"])]
+with st.container(key="filterbar"):
+    c_place, c_type, c_period = st.columns([1.9, 1.1, 3], vertical_alignment="bottom")
+    with c_place:
+        place_sel = st.multiselect("אזור או יישוב", zone_keys + city_keys, key="place_sel", format_func=place_label,
+                                   placeholder="כל הארץ (הקלידו לחיפוש)")
+    with c_type:
+        types = st.pills("סוג התרעה", present_types, selection_mode="multi", key="types",
+                         format_func=dd.type_label, help="בלי בחירה מוצגים כל הסוגים") or []
+    with c_period:
+        # LTR button group: listed so that "הכל" ends up on the right (the start, in RTL reading).
+        st.segmented_control("תקופה", list(reversed(PRESETS)), key="preset", on_change=apply_preset,
+                             help="הימים נספרים אחורה מהיום האחרון שיש עליו נתונים")
+    if st.session_state.get("preset") == CUSTOM:
+        st.date_input("טווח תאריכים", key="date_range", min_value=data_min, max_value=data_max,
+                      format="DD/MM/YYYY")
+
+picked = st.session_state["date_range"]
+start, end = (picked[0], picked[1]) if isinstance(picked, (list, tuple)) and len(picked) == 2 else (data_min, data_max)
+zones = [k.split("|", 1)[1] for k in place_sel if k.startswith("z|")]
+cities = [k.split("|", 1)[1] for k in place_sel if k.startswith("c|")]
+filtered = bool(place_sel or types) or (start, end) != (data_min, data_max)
 if filtered:
-    st.button("ניקוי סינון", on_click=reset_filters, key="reset_top", icon=":material/filter_alt_off:")
+    st.button("ניקוי בחירה", on_click=reset_filters, key="reset_top", type="tertiary",
+              icon=":material/filter_alt_off:")
+
+df = dd.filter_places(dd.filter_alerts(alerts, start, end, types), zones, cities)
+unit = UNITS[mode]
 
 if df.empty:
-    notice("אין התרעות שמתאימות לסינון", "אפשר להרחיב את טווח התאריכים, או להסיר חלק מהסוגים, האזורים והיישובים.")
+    notice("אין התרעות שמתאימות לבחירה", "אפשר להרחיב את התקופה, או להסיר חלק מהסוגים, האזורים והיישובים.")
     st.markdown(ds.footer_html(data_until), unsafe_allow_html=True)
     st.stop()
 
+# --- KPI row ---------------------------------------------------------------------------
 k = dd.kpis(df, mode)
 last = dd.last_alert(df)
-last_where = last["place"] + (f" · {last['localities']:,} יישובים" if last["localities"] > 1 else "")
-st.markdown(ds.kpi_cards_html([
-    {"label": unit, "value": f"{k['total']:,}", "primary": True,
-     "sub": {dd.MODE_LOCALITIES: f"{k['localities']:,} יישובים קיבלו התרעה",
+daily_total = dd.time_series(df, "1D", mode, start, end).sum(axis=1)
+hours_total = dd.hour_of_day(df, mode).sum(axis=1)
+n_days = (end - start).days + 1
+last_where = last["place"] + (f", {last['localities']:,} יישובים" if last["localities"] > 1 else "")
+st.markdown(ds.kpi_row_html([
+    {"label": unit, "value": f"{k['total']:,}",
+     "sub": {dd.MODE_LOCALITIES: f"ב-{k['localities']:,} יישובים",
              dd.MODE_EVENTS: "כל דקה וסוג נספרים פעם אחת",
-             dd.MODE_BARRAGES: f"התרעות בהפרש של עד {dd.BARRAGE_GAP_MIN} דקות = מטח אחד"}[mode]},
-    {"label": "ימים עם התרעות", "value": f"{k['active_days']:,}", "sub": f"מתוך {(end - start).days + 1:,} ימים בטווח"},
-    {"label": "ממוצע ליום פעיל", "value": f"{round(k['per_active_day']):,}", "sub": unit},
+             dd.MODE_BARRAGES: f"התרעות בהפרש של עד {dd.BARRAGE_GAP_MIN} דקות"}[mode],
+     "viz": ds.sparkline_svg(daily_total.values, single_color(df))},
+    {"label": "ימים עם התרעות", "value": f"{k['active_days']:,}", "sub": f"מתוך {n_days:,} ימים בתקופה",
+     "viz": ds.ratio_bar_html(k["active_days"] / n_days if n_days else 0)},
     {"label": "שעת שיא", "value": f"{k['peak_hour']:02d}:00", "ltr": True,
-     "sub": "השעה העמוסה ביותר ביממה"},
-    {"label": "היישוב עם הכי הרבה התרעות", "value": k["top_city"], "text": True,
-     "sub": f"{k['top_city_count']:,} התרעות ביישוב"},
-    {"label": "התרעה אחרונה בטווח", "value": f"{last['timestamp']:%d/%m/%Y %H:%M}", "ltr": True, "text": True,
+     "sub": f"ממוצע ליום פעיל: {round(k['per_active_day']):,}",
+     "viz": ds.hour_bars_svg(hours_total.values, k["peak_hour"], single_color(df), T["axis"])},
+    {"label": "התרעה אחרונה", "value": f"{last['timestamp']:%d/%m/%Y %H:%M}", "ltr": True, "text": True,
      "sub": last_where},
 ]), unsafe_allow_html=True)
 
-TAB_NAMES = ["ציר זמן", "מפה", "אחרונות", "שעות", "מקומות", "התגוננות", "נתונים"]
+TAB_NAMES = ["סקירה", "מפה", "אזורים", "זמנים", "אחרונות", "נתונים"]
 try:
     # Lazy tabs: the heavy map is only built while its tab is open (Streamlit >= 1.5x).
     tabs = st.tabs(TAB_NAMES, key="tab", on_change="rerun")
 except TypeError:
     tabs = st.tabs(TAB_NAMES)
-tab_time, tab_map, tab_recent, tab_hours, tab_places, tab_shelter, tab_data = tabs
-tab_days = tab_hours  # the day x hour calendar is the last chart of the hour-patterns tab
+tab_time, tab_map, tab_places, tab_hours, tab_recent, tab_data = tabs
+tab_days = tab_shelter = tab_hours  # "times" holds hours, the day x hour grid and shelter time
 
 
 def tab_is_open(tab):
+    if os.getenv("DASHBOARD_ALL_TABS") == "1":  # tests: build every lazy tab
+        return True
     is_open = getattr(tab, "open", None)
     return True if is_open is None else bool(is_open)
 
@@ -243,8 +272,7 @@ def stacked_bars(wide, x_title, height=380, hover_x="%{x}"):
                     hovertemplate=f"{hover_x}<br>{dd.type_label(t)}: %{{y:,}}<extra></extra>")
     fig.update_layout(barmode="stack", barcornerradius=4)
     style(fig, height=height, legend=len(wide.columns) > 1)
-    fig.update_xaxes(title_text=x_title)
-    fig.update_yaxes(title_text=unit, rangemode="tozero")
+    fig.update_yaxes(rangemode="tozero")
     return fig
 
 
@@ -267,8 +295,52 @@ with tab_time:
         ts_peak, val = peak
         fig.add_annotation(x=ts_peak, y=val, text=f"שיא: {val:,}", showarrow=True, arrowhead=0, ax=0, ay=-28,
                            font=dict(color=T["ink"], size=12), arrowcolor=T["axis"])
-    fig.update_layout(title_text=f"{unit} לפי {next(k for k, v in dd.RESOLUTIONS.items() if v == eff)}")
-    show(fig)
+    eff_name = next(k for k, v in dd.RESOLUTIONS.items() if v == eff)
+    show(fig, f"{unit} לאורך זמן", f"לפי {eff_name}, {start:%d/%m/%Y} עד {end:%d/%m/%Y}")
+
+    # Records: plain facts about the current selection
+    rec = dd.records(df, mode, start, end)
+    facts = []
+    day, n = rec["busiest_day"]
+    facts.append({"label": "היום העמוס ביותר", "value": f"{day:%d/%m/%Y}", "ltr": True, "sub": f"{n:,} {unit}"})
+    hour, n = rec["busiest_hour"]
+    facts.append({"label": "השעה העמוסה ביותר", "value": f"{hour:%d/%m/%Y %H}:00", "ltr": True, "sub": f"{n:,} {unit}"})
+    ts_max, n = rec["largest_minute"]
+    if n > 1:
+        facts.append({"label": "הכי הרבה יישובים בדקה אחת", "value": f"{n:,} יישובים",
+                      "sub": f"ב-{ts_max:%d/%m/%Y} בשעה {ts_max:%H:%M}"})
+    if "worst_zone_day" in rec:
+        zone, day, n = rec["worst_zone_day"]
+        facts.append({"label": "האזור עם הכי הרבה התרעות ביום אחד", "value": zone,
+                      "sub": f"{n:,} {unit} ב-{day:%d/%m/%Y}"})
+    q, q_from, q_to = rec["longest_quiet"]
+    facts.append({"label": "הרצף הארוך ביותר של ימים בלי התרעות",
+                  "value": "אין ימים שקטים" if q == 0 else ("יום אחד" if q == 1 else f"{q} ימים"),
+                  "sub": "בכל יום בתקופה הייתה לפחות התרעה אחת" if q == 0 else f"{q_from:%d/%m} עד {q_to:%d/%m/%Y}"})
+    st.markdown(ds.chart_head_html("שיאים", "לפי התקופה, הסוגים והמקומות שנבחרו"), unsafe_allow_html=True)
+    st.markdown(ds.facts_html(facts), unsafe_allow_html=True)
+
+    # Calendar: one square per day, weeks as columns
+    cal = dd.calendar_matrix(df, mode, start, end)
+    dates = [[(w + timedelta(days=i)).strftime("%d/%m/%Y") for w in cal.columns] for i in range(7)]
+    fig = go.Figure(go.Heatmap(
+        z=cal.values, x=[f"{w:%d/%m}" for w in cal.columns], y=cal.index, customdata=dates,
+        colorscale=seq_scale(), xgap=3, ygap=3, hoverongaps=False,
+        hovertemplate="%{customdata}, יום %{y}<br>" + unit + ": %{z:,}<extra></extra>",
+        colorbar=dict(thickness=8, len=0.9, outlinewidth=0, tickfont=dict(color=T["muted"]))))
+    n_weeks = cal.shape[1]
+    cell = 30 if n_weeks <= 20 else 18
+    fixed = n_weeks * cell <= 880  # short ranges: square cells at a fixed size; long ranges: fill the width
+    style(fig, height=7 * cell + 70, legend=False)
+    fig.update_layout(margin=dict(l=8, r=8, t=34, b=8))
+    if fixed:
+        fig.update_layout(width=n_weeks * cell + 150)
+    step = 1 if cell >= 30 else 2
+    fig.update_yaxes(autorange="reversed", type="category", ticksuffix="  ", showgrid=False)
+    fig.update_xaxes(type="category", side="top", showgrid=False, tickangle=0,
+                     tickvals=list(range(0, n_weeks, step)),
+                     ticktext=[f"{w:%d/%m}" for w in cal.columns][::step])
+    show(fig, "לוח שנה", f"{unit} בכל יום. עמודה היא שבוע שמתחיל ביום ראשון", fixed_width=fixed)
 
 # --- Recent barrages -----------------------------------------------------------------
 with tab_recent:
@@ -409,8 +481,7 @@ def select_city_from_map(event, poly_names, point_names):
 
 
 def focus_dashboard_on(our_cities):
-    st.session_state["zones"] = []
-    st.session_state["cities"] = sorted(our_cities)
+    set_places(cities=sorted(our_cities))
 
 
 def locality_details(geo_name, dfg, layers, localities):
@@ -436,19 +507,15 @@ def locality_details(geo_name, dfg, layers, localities):
     with left:
         fig = stacked_bars(dd.hour_of_day(sub), "שעה ביום", height=280, hover_x="%{x}:00")
         fig.update_xaxes(tickmode="array", tickvals=list(range(0, 24, 3)), ticktext=[f"{h:02d}" for h in range(0, 24, 3)])
-        fig.update_yaxes(title_text="התרעות")
-        fig.update_layout(title_text="לפי שעה ביום")
-        show(fig)
+        show(fig, "לפי שעה ביום", "התרעות ביישוב")
     with right:
         daily = dd.time_series(sub, "1D", start=start, end=end)
         fig = stacked_bars(daily, "", height=280, hover_x="%{x|%d/%m/%Y}")
         fig.update_xaxes(tickformat="%d/%m")
-        fig.update_yaxes(title_text="התרעות")
-        fig.update_layout(title_text="לפי יום")
-        show(fig)
+        show(fig, "לפי יום", "התרעות ביישוב")
     our_names = sorted(sub["city"].unique())
     st.button(f"הצג את כל הדשבורד עבור {geo_name}", on_click=focus_dashboard_on, args=(our_names,),
-              help="מסנן את כל הלשוניות ליישוב הזה (אפשר לבטל ב'ניקוי סינון')")
+              help="מסנן את כל הלשוניות ליישוב הזה (אפשר לבטל ב'ניקוי בחירה')")
 
 
 with tab_map:
@@ -496,6 +563,9 @@ with tab_map:
             selected = st.session_state.get("map_city")
             fig = map_figure(frames_counts, layers, poly_names, point_names, text_for(poly_names),
                              text_for(point_names), frame_labels, selected)
+            st.markdown(ds.chart_head_html("התרעות לפי יישוב", f"{unit}, {start:%d/%m/%Y} עד {end:%d/%m/%Y}. "
+                                                               "לחיצה על יישוב פותחת את הפרטים שלו"),
+                        unsafe_allow_html=True)
             st.plotly_chart(fig, width="stretch", config={**PLOTLY_CONFIG, "scrollZoom": True},
                             theme=None, on_select="rerun", selection_mode="points", key="map_chart")
             map_legend(layers)
@@ -516,11 +586,38 @@ with tab_map:
 
 # --- Hours of day ---------------------------------------------------------------------
 with tab_hours:
+    per_locality = len(cities) == 1 and not zones
+    gs = dd.gap_stats(df, per_locality)
+    between = f"בין התרעות ב{cities[0]}" if per_locality else "בין מטחים"
+    night = dd.night_share(df, mode)
+    st.markdown(ds.chart_head_html("מרווחים בין התרעות",
+                                   f"{between} בבחירה הנוכחית" + ("" if per_locality else
+                                   f". מטח: התרעות מאותו סוג בהפרש של עד {dd.BARRAGE_GAP_MIN} דקות")),
+                unsafe_allow_html=True)
+    longest_sub = (f"התחילה ב-{gs['longest_from']:%d/%m/%Y} בשעה {gs['longest_from']:%H:%M}"
+                   if gs["longest"] is not None else "צריך לפחות שתי התרעות")
+    st.markdown(ds.kpi_row_html([
+        {"label": "מרווח חציוני", "value": dd.format_duration(gs["median"]),
+         "sub": "חצי מהמרווחים קצרים מזה"},
+        {"label": "ההפסקה הארוכה ביותר", "value": dd.format_duration(gs["longest"]), "sub": longest_sub},
+        {"label": "בלילה", "value": f"{round((night or 0) * 100)}%", "ltr": True,
+         "sub": "בין 22:00 ל-06:00"},
+        {"label": "התרעות בפועל" if per_locality else "מטחים", "value": f"{gs['moments']:,}",
+         "sub": "דקות עם התרעה ביישוב" if per_locality else "בבחירה הנוכחית"},
+    ]), unsafe_allow_html=True)
+    if len(gs["gaps"]):
+        hist = dd.gap_histogram(gs["gaps"])
+        fig = go.Figure(go.Bar(x=list(hist.index), y=hist.values, marker_color=single_color(df), marker_line_width=0,
+                               hovertemplate="%{x}<br>%{y:,} מרווחים<extra></extra>"))
+        fig.update_layout(barcornerradius=4)
+        style(fig, height=300, legend=False)
+        fig.update_xaxes(type="category")
+        show(fig, "כמה זמן עובר עד ההתרעה הבאה", f"מספר המרווחים {between} לפי משך")
+
     hod = dd.hour_of_day(df, mode)
     fig = stacked_bars(hod, "שעה ביום", hover_x="%{x}:00")
-    fig.update_xaxes(tickmode="array", tickvals=list(range(24)), ticktext=[f"{h:02d}" for h in range(24)])
-    fig.update_layout(title_text="התפלגות לפי שעה ביום")
-    show(fig)
+    fig.update_xaxes(tickmode="array", tickvals=list(range(0, 24, 2)), ticktext=[f"{h:02d}" for h in range(0, 24, 2)])
+    show(fig, "לפי שעה ביממה", f"{unit}, שעון ישראל")
 
     left, right = st.columns(2)
     with left:
@@ -531,9 +628,8 @@ with tab_hours:
             colorbar=dict(thickness=10, outlinewidth=0, tickfont=dict(color=T["muted"]))))
         style(fig, height=340, legend=False)
         fig.update_yaxes(autorange="reversed", showgrid=False, type="category", ticksuffix="  ")
-        fig.update_xaxes(showgrid=False, title_text="שעה", type="category")
-        fig.update_layout(title_text="יום בשבוע × שעה")
-        show(fig)
+        fig.update_xaxes(showgrid=False, type="category")
+        show(fig, "יום בשבוע ושעה", f"{unit}. שורות: ימי השבוע, עמודות: שעות")
     with right:
         minute_bin = st.segmented_control("חלון דקות", [5, 10, 15, 20, 30], default=10, key="mbin") or 10
         m = dd.hour_minute_matrix(df, minute_bin, mode)
@@ -543,10 +639,9 @@ with tab_hours:
             hovertemplate="%{y}%{x}<br>" + unit + ": %{z:,}<extra></extra>",
             colorbar=dict(thickness=10, outlinewidth=0, tickfont=dict(color=T["muted"]))))
         style(fig, height=520, legend=False)
-        fig.update_yaxes(autorange="reversed", showgrid=False, title_text="שעה", type="category")
-        fig.update_xaxes(showgrid=False, title_text="דקה", type="category")
-        fig.update_layout(title_text=f"שעה × דקה (חלונות של {minute_bin} דקות)")
-        show(fig)
+        fig.update_yaxes(autorange="reversed", showgrid=False, type="category")
+        fig.update_xaxes(showgrid=False, type="category")
+        show(fig, "שעה ודקה", f"{unit}. שורות: שעות, עמודות: חלונות של {minute_bin} דקות")
 
 # --- Day x hour calendar --------------------------------------------------------------
 with tab_days:
@@ -561,8 +656,8 @@ with tab_days:
     fig.update_yaxes(autorange="reversed", showgrid=False, type="category",
                      dtick=max(1, n_days // 40))
     fig.update_xaxes(showgrid=False, side="top", type="category")
-    fig.update_layout(title_text="כל יום בטווח (שורות) לפי שעה ביום (עמודות)", margin=dict(t=64))
-    show(fig)
+    fig.update_layout(margin=dict(t=28))
+    show(fig, "כל יום בתקופה לפי שעה", f"{unit}. שורות: ימים, עמודות: שעות ביממה")
     daily = m.sum(axis=1)
     quiet = int((daily == 0).sum())
     st.caption(f"{n_days} ימים בטווח · {quiet} ימים בלי התרעות · היום העמוס ביותר: "
@@ -576,32 +671,86 @@ def select_place(level):
         return
     name = st.session_state[f"_top_{level}_names"][rows[0]]
     if level == "zone":
-        st.session_state["zones"], st.session_state["cities"] = [name], []
+        set_places(zones=[name])
     else:
-        st.session_state["cities"] = [name]
+        set_places(cities=[name])
 
 
 with tab_places:
-    n_top = st.segmented_control("כמה להציג", [10, 20, 30, 50], default=20, key="ntop") or 20
-    st.caption("לחיצה על שורה מסננת את כל הדשבורד לאותו אזור או יישוב.")
-    left, right = st.columns(2)
-    for col, level, title in ((left, "zone", "אזורים"), (right, "city", "יישובים")):
-        with col:
-            top = dd.top_counts(df, level, n_top, mode)
-            st.session_state[f"_top_{level}_names"] = list(top.index)
-            table = pd.DataFrame({"rank": range(1, len(top) + 1), "name": top.index, "count": top.values})
-            count_label = unit if level == "zone" or mode == dd.MODE_BARRAGES else "התרעות ביישוב"
-            st.markdown(f"**{title} עם הכי הרבה התרעות**")
-            st.dataframe(
-                table, hide_index=True, key=f"top_{level}", on_select=lambda lv=level: select_place(lv),
-                selection_mode="single-row", height=35 * len(table) + 38,
-                column_order=["count", "name", "rank"],  # LTR grid: the rank ends up on the right
-                column_config={
-                    "rank": st.column_config.NumberColumn("#", width="small"),
-                    "name": st.column_config.TextColumn("אזור" if level == "zone" else "יישוב"),
-                    "count": st.column_config.ProgressColumn(
-                        count_label, format="localized", min_value=0, max_value=int(top.max()) if len(top) else 1),
-                })
+    if tab_is_open(tab_places):
+        st.caption("לחיצה על שורה מסננת את כל הדשבורד לאותו אזור או יישוב.")
+        zt = dd.zone_table(df, mode, start, end)
+        st.session_state["_top_zone_names"] = list(zt["zone"])
+        zview = pd.DataFrame({
+            "daily": zt["daily"], "top_type": zt["top_type"].map(dd.type_label),
+            "median_gap": zt["median_gap"].map(dd.format_duration), "night": zt["night_share"] * 100,
+            "localities": zt["localities"], "total": zt["total"], "zone": zt["zone"],
+        })
+        st.markdown(ds.chart_head_html("השוואת אזורים", f"{unit} בכל אזור, מהגבוה לנמוך"), unsafe_allow_html=True)
+        st.dataframe(
+            zview, hide_index=True, key="top_zone", on_select=lambda: select_place("zone"),
+            selection_mode="single-row", height=min(560, 35 * len(zview) + 38),
+            column_order=["daily", "top_type", "median_gap", "night", "localities", "total", "zone"],  # LTR grid
+            column_config={
+                "zone": st.column_config.TextColumn("אזור"),
+                "total": st.column_config.ProgressColumn(unit, format="localized", min_value=0,
+                                                         max_value=int(zt["total"].max()) if len(zt) else 1),
+                "localities": st.column_config.NumberColumn("יישובים", help="יישובים שקיבלו התרעה באזור"),
+                "night": st.column_config.NumberColumn("בלילה", format="%.0f%%", help="אחוז ההתרעות בין 22:00 ל-06:00"),
+                "median_gap": st.column_config.TextColumn(
+                    "מרווח חציוני", help=f"הזמן החציוני בין מטחים באזור (מטח: התרעות מאותו סוג בהפרש של עד "
+                                         f"{dd.BARRAGE_GAP_MIN} דקות)"),
+                "top_type": st.column_config.TextColumn("סוג נפוץ"),
+                "daily": st.column_config.LineChartColumn("מגמה יומית", y_min=0),
+            })
+        st.markdown(ds.chart_foot_html(f"מקור: ערוץ הטלגרם צופר - צבע אדום. עודכן {SOURCE_UPDATED}."),
+                    unsafe_allow_html=True)
+
+        # Small multiples: the busiest zones on one shared time axis, read right to left like the table
+        top = zt.head(12)
+        if len(top) > 1:
+            n_cols = 4 if len(top) > 6 else 3
+            n_rows = -(-len(top) // n_cols)
+            days = pd.date_range(pd.Timestamp(start), pd.Timestamp(end), freq="1D")
+            # RTL: the busiest zone at the top right. Titles are given in plotly's row-major, left-to-right order.
+            cell = {idx: (idx // n_cols + 1, n_cols - idx % n_cols) for idx in top.index}
+            titles = [" "] * (n_rows * n_cols)
+            for idx, row in top.iterrows():
+                r, c = cell[idx]
+                titles[(r - 1) * n_cols + (c - 1)] = f"<b>{row['zone']}</b>  {row['total']:,}"
+            fig = make_subplots(rows=n_rows, cols=n_cols, shared_xaxes=True, shared_yaxes=True,
+                                horizontal_spacing=0.03, vertical_spacing=0.14, subplot_titles=titles)
+            color = single_color(df)
+            for idx, row in top.iterrows():
+                r, c = cell[idx]
+                fig.add_trace(go.Scatter(
+                    x=days, y=row["daily"], mode="lines", line=dict(color=color, width=1.6), fill="tozeroy",
+                    fillcolor=ds.with_alpha(color, 0.14), name=row["zone"],
+                    hovertemplate=f"{row['zone']}<br>%{{x|%d/%m/%Y}}: %{{y:,}}<extra></extra>"), row=r, col=c)
+            style(fig, height=150 * n_rows + 40, legend=False)
+            fig.update_layout(margin=dict(l=8, r=8, t=36, b=8))
+            fig.update_annotations(font=dict(size=12, color=T["ink"]))
+            fig.update_xaxes(showticklabels=True, tickformat="%d/%m", nticks=4)
+            fig.update_yaxes(rangemode="tozero", nticks=3)
+            show(fig, "מגמה לפי אזור", f"{unit} ביום ב-{len(top)} האזורים עם הכי הרבה התרעות, על אותו ציר")
+
+        top_city = dd.top_counts(df, "city", 20, mode)
+        st.session_state["_top_city_names"] = list(top_city.index)
+        city_label = unit if mode == dd.MODE_BARRAGES else "התרעות ביישוב"
+        ctable = pd.DataFrame({"rank": range(1, len(top_city) + 1), "name": top_city.index,
+                               "zone": [CITY_ZONE.get(c, "") for c in top_city.index], "count": top_city.values})
+        st.markdown(ds.chart_head_html("יישובים עם הכי הרבה התרעות", city_label), unsafe_allow_html=True)
+        st.dataframe(
+            ctable, hide_index=True, key="top_city", on_select=lambda: select_place("city"),
+            selection_mode="single-row", height=35 * len(ctable) + 38,
+            column_order=["count", "zone", "name", "rank"],  # LTR grid: the rank ends up on the right
+            column_config={
+                "rank": st.column_config.NumberColumn("#", width="small"),
+                "name": st.column_config.TextColumn("יישוב"),
+                "zone": st.column_config.TextColumn("אזור"),
+                "count": st.column_config.ProgressColumn(
+                    city_label, format="localized", min_value=0, max_value=int(top_city.max()) if len(top_city) else 1),
+            })
 
 # --- Shelter time ---------------------------------------------------------------------
 with tab_shelter:
@@ -617,11 +766,10 @@ with tab_shelter:
                                              ("דקה" if sec == 60 else ("דקה וחצי" if sec == 90 else f"{sec // 60} דקות")))
         fig = go.Figure(go.Bar(x=[fmt(s) for s in sd.index], y=sd.values, marker_color=single_color(df),
                                marker_line_width=0, hovertemplate="%{x}<br>%{y:,} התרעות ביישובים<extra></extra>"))
-        fig.update_layout(barcornerradius=4, title_text="התרעות לפי זמן ההתגוננות של היישוב")
+        fig.update_layout(barcornerradius=4)
         style(fig, legend=False)
-        fig.update_xaxes(type="category", title_text="זמן התגוננות")
-        fig.update_yaxes(title_text="התרעות ביישובים")
-        show(fig)
+        fig.update_xaxes(type="category")
+        show(fig, "זמן התגוננות", "התרעות ביישובים לפי הזמן שיש לתושבים להגיע למרחב מוגן")
 
 # --- Raw data -------------------------------------------------------------------------
 with tab_data:
@@ -635,5 +783,19 @@ with tab_data:
                  column_config={"זמן": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")})
     st.download_button("הורדת הנתונים המסוננים (CSV)", view.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"alerts_{start:%Y%m%d}_{end:%Y%m%d}.csv", mime="text/csv")
+
+with st.expander("איך חישבנו"):
+    st.markdown(
+        f"""
+- **המקור היחיד** הוא הודעות ערוץ הטלגרם "צופר - צבע אדום": איזה יישוב, באיזו דקה ואיזה סוג התרעה.
+- **התרעות ביישובים**: כל יישוב שהופעלה בו התרעה נספר פעם אחת בכל דקה. יישוב שהופיע פעמיים באותה דקה נספר פעם אחת.
+- **אירועים**: כל דקה וסוג התרעה נספרים פעם אחת, לא משנה בכמה יישובים.
+- **מטחים**: התרעות מאותו סוג בהפרש של עד {dd.BARRAGE_GAP_MIN} דקות נספרות כמטח אחד, ולכן מטח יכול להימשך יותר מ-{dd.BARRAGE_GAP_MIN} דקות.
+- **לילה**: 22:00 עד 06:00. כל הזמנים בשעון ישראל.
+- **מרווחים**: כשנבחר יישוב אחד, המרווח נמדד בין דקות ההתרעה שלו. אחרת הוא נמדד בין מטחים.
+- **לא נספרות** הודעות "סיום אירוע".
+- **התרעה ביישוב איננה רקטה**, ואזור התרעה איננו נקודת פגיעה. התרעה אחת יכולה להפעיל עשרות יישובים.
+- **הנתונים נכונים** עד {SOURCE_UPDATED}.
+""")
 
 st.markdown(ds.footer_html(data_until), unsafe_allow_html=True)
