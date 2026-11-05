@@ -133,23 +133,42 @@ def _localities():
                         index=["אילת", "מטולה", "תל אביב", "שדרות"])
 
 
-def test_dot_projection_fits_frame_and_keeps_north_up():
+def test_dot_projection_keeps_north_up_and_west_left():
     loc = _localities()
-    proj = md.dot_projection(loc["lat"], loc["lng"])
-    x, y = md.project(loc["lat"], loc["lng"], proj)
-    x0, y0, x1, y1 = md.DOT_FRAME
-    assert (x >= x0 - 0.1).all() and (x <= x1 + 0.1).all()
-    assert (y >= y0 - 0.1).all() and (y <= y1 + 0.1).all()
+    x, y = md.project(loc["lat"], loc["lng"], md.dot_projection())
     assert y[1] < y[2] < y[0]          # Metula north of Tel Aviv north of Eilat
     assert x[3] < x[1]                 # Sderot west of Metula
-    assert y.max() - y.min() == pytest.approx(y1 - y0, abs=0.2)  # the long side fills the frame
+
+
+def test_every_locality_lands_inside_the_outline_and_the_viewbox():
+    """The header/locator dots must sit inside the drawn outline (and so never in the sea or clipped)."""
+    import re
+
+    from matplotlib.path import Path
+
+    from dashboard_style import ISRAEL_PATH
+
+    outline = Path([tuple(map(float, p)) for p in re.findall(r"(-?[\d.]+) (-?[\d.]+)", ISRAEL_PATH)])
+    points = md.load_points()
+    x, y = md.project(points["lat"], points["lng"], md.dot_projection())
+    w, h = md.DOT_VIEWBOX
+    assert (x > 0).all() and (x < w).all() and (y > 0).all() and (y < h).all()
+    outside = ~outline.contains_points(list(zip(x, y)), radius=-1.0)
+    assert outside.mean() <= 0.02, list(points.index[outside][:10])
 
 
 def test_dot_levels_buckets_by_count_and_skips_unknown_and_zero():
     loc = _localities()
-    proj = md.dot_projection(loc["lat"], loc["lng"])
+    proj = md.dot_projection()
     counts = pd.Series({"שדרות": 100, "תל אביב": 1, "מטולה": 0, "לא קיים": 50})
     levels = md.dot_levels(counts, loc, proj, levels=4)
     assert len(levels) == 4
     assert [len(x) for x, _ in levels] == [1, 0, 0, 1]  # Tel Aviv dimmest, Sderot brightest
     assert sum(len(x) for x, _ in md.dot_levels(pd.Series(dtype=int), loc, proj)) == 0
+
+
+def test_load_points_has_coordinates_for_every_geo_locality():
+    points = md.load_points()
+    _, localities = md.load_geo()
+    assert set(points.index) == set(localities.index)
+    assert points[["lat", "lng"]].notna().all().all()

@@ -215,27 +215,26 @@ def colorscale(zero_color, layer_ramps):
 # --------------------------------------------------------------------------------------
 # Dot maps (header background, locator next to the place picker)
 # --------------------------------------------------------------------------------------
-# The dots share the viewBox of the decorative outline in dashboard_style.ISRAEL_PATH (0 0 180 460);
-# DOT_FRAME is the box the outline fills there (x0, y0, x1, y1).
+# The dots share the viewBox of the decorative outline in dashboard_style.ISRAEL_PATH (0 0 180 460).
+# The outline is hand drawn, so the projection is fitted to it (not to the localities' bounding box):
+# equirectangular around 31.5N, with scale and offset chosen so that every locality in
+# data/geo/localities.geojson falls inside the outline (tests/test_map_data.py checks it).
 DOT_VIEWBOX = (180, 460)
-DOT_FRAME = (7, 6, 175, 455)
 DOT_LEVELS = 4
+OUTLINE_PROJECTION = {"lng0": 34.25, "lat1": 33.35, "kx": float(np.cos(np.radians(31.5))), "scale": 102.5,
+                      "x0": 17.5, "y0": 24.5}
 
 
-def dot_projection(lat, lng):
-    """Fit lat/lng to DOT_FRAME (equirectangular, x scaled by cos(mean latitude), aspect kept).
+def dot_projection():
+    """Projection parameters for project(): lat/lng -> the outline's viewBox."""
+    return dict(OUTLINE_PROJECTION)
 
-    Fit on *all* localities, so the dots keep their place whatever subset is drawn.
-    Returns a dict for project().
-    """
-    lat = np.asarray(lat, dtype=float)
-    lng = np.asarray(lng, dtype=float)
-    kx = float(np.cos(np.radians(lat.mean())))
-    x0, y0, x1, y1 = DOT_FRAME
-    span_x = (lng.max() - lng.min()) * kx or 1.0
-    span_y = (lat.max() - lat.min()) or 1.0
-    scale = min((x1 - x0) / span_x, (y1 - y0) / span_y)
-    return {"lng0": float(lng.min()), "lat1": float(lat.max()), "kx": kx, "scale": scale, "x0": x0, "y0": y0}
+
+def load_points(path=GEOJSON_FILE):
+    """Localities with coordinates only (name, zone, lat, lng), without building the polygon layer."""
+    with open(path, encoding="utf-8") as f:
+        rows = [feat["properties"] for feat in json.load(f)["features"]]
+    return pd.DataFrame(rows).set_index("name", drop=False)[["zone", "lat", "lng"]]
 
 
 def project(lat, lng, proj):
