@@ -65,6 +65,25 @@ def barrage_ids(df, gap_minutes=BARRAGE_GAP_MIN):
     return pd.Series(ids.reindex(keys).to_numpy(), index=df.index, name="barrage")
 
 
+def filter_places(df, zones=None, cities=None):
+    """Rows in any of the chosen zones OR cities (one combined place picker). Nothing chosen = everything."""
+    if not zones and not cities:
+        return df
+    mask = pd.Series(False, index=df.index)
+    if zones:
+        mask |= df["zone"].isin(zones)
+    if cities:
+        mask |= df["city"].isin(cities)
+    return df[mask]
+
+
+def city_zones(df):
+    """Locality -> its most common zone (for labelling localities in the place picker)."""
+    if df.empty:
+        return {}
+    return df.groupby("city")["zone"].agg(lambda z: z.value_counts().index[0]).to_dict()
+
+
 def apply_mode(df, mode, extra_keys=()):
     """Collapse rows to the counting unit of the mode.
 

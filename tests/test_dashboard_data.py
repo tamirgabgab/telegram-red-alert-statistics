@@ -124,3 +124,11 @@ def test_barrage_table_and_top_counts():
     # in barrage mode a locality hit twice in one barrage counts once
     assert dd.top_counts(df, "city", mode=dd.MODE_BARRAGES)["זרעית"] == 1
     assert dd.barrage_table(df.iloc[0:0]).empty
+
+
+def test_filter_places_is_an_or_of_zones_and_cities():
+    df = make_df()
+    assert len(dd.filter_places(df)) == len(df)
+    both = dd.filter_places(df, zones=["עוטף עזה"], cities=["חולון"])
+    assert len(both) == 4  # three Gaza-envelope rows + Holon
+    assert dd.city_zones(df)["זרעית"] == "קו העימות"
