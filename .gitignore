@@ -24,3 +24,7 @@ all_cities_without_condition.txt
 .DS_Store
 .idea/
 .vscode/
+
+# Visual check output (tools/screenshots.js)
+screenshots/
+node_modules/

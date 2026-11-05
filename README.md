@@ -18,7 +18,7 @@ The tool is designed to help analyze the spatial and temporal distribution of ro
 
 ## ✨ Key Features
 
-- **Interactive dashboard** (Streamlit) — filter by date range, alert type, zone and locality; time series at minute → week resolution, hour-of-day / weekday / day × hour heatmaps, top zones & localities, time-to-shelter, CSV export
+- **Interactive dashboard** (Streamlit) — filter by date range, alert type, zone and locality; count by localities, events or barrages (same-type alerts ≤ 3 min apart); time series at minute → week resolution, recent-barrages feed, hour-of-day / weekday / day × hour heatmaps, top zones & localities (click to filter), time-to-shelter, CSV export. Red/white theme with light and dark mode, Hebrew RTL, mobile layout
 - **All alert types** — 🔴 rockets (צבע אדום), ✈️ hostile aircraft (חדירת כלי טיס עוין), 🔓 terrorist infiltration (חדירת מחבלים)
 - **Incremental Telegram collection** — raw messages are stored once (`data/raw_messages.jsonl`) and re-parsed any time
 - **Smart message parsing** — Hebrew text, locality names that contain commas, time-to-shelter, end-of-event messages, de-duplication
@@ -48,6 +48,8 @@ The tool is designed to help analyze the spatial and temporal distribution of ro
 telegram-red-alert-statistics/
 ├── dashboard.py           # Streamlit dashboard (UI)
 ├── dashboard_data.py      # Aggregations used by the dashboard (pure pandas, tested)
+├── dashboard_style.py     # Design tokens, global CSS, header band, KPI cards, feed and footer
+├── tools/screenshots.js   # Visual check: screenshots of every tab, desktop/mobile, light/dark
 ├── collect_alerts.py      # Incremental Telegram collector -> data/raw_messages.jsonl
 ├── build_dataset.py       # Raw messages / legacy Excel -> data/alerts.csv.gz
 ├── alerts_parser.py       # Message parser (all alert types, shelter time, end events)
@@ -99,6 +101,8 @@ streamlit run dashboard.py
 ```
 
 The repo already contains `data/alerts.csv.gz` (red alerts, 28/02/2026 – 27/03/2026), so the dashboard works right away.
+Theme colors and the font live in `.streamlit/config.toml` and `dashboard_style.py`; the app follows the device's light/dark setting.
+Add `?dev=1` to the URL to see maintainer hints (data collection commands).
 
 ### 3. Collect fresh data (all alert types)
 
@@ -124,6 +128,15 @@ Controlled by the flags in `parameters.py` (`COLLET`, `STATISTICS`, `EXTRA_STATI
 
 ```bash
 pytest -q
+```
+
+### Visual check (UI changes)
+
+With the dashboard running, take screenshots of every tab at 1280px and 375px, light and dark:
+
+```bash
+npm install --no-save playwright && npx playwright install chromium   # once
+node tools/screenshots.js                 # -> screenshots/ ; exits 1 on overflow or exceptions
 ```
 
 ---
