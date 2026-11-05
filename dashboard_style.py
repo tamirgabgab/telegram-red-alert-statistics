@@ -63,6 +63,29 @@ SIREN_ICON = """
 """
 
 
+MOTIF_ALPHA = {"light": 0.04, "dark": 0.035}
+
+
+def margin_motifs(t):
+    """CSS background-image value: radar rings (left margin) and dashed trajectory arcs (right margin).
+
+    Stroke = the theme's ink at 3.5-4% opacity: visible as texture, far below any text contrast.
+    """
+    from urllib.parse import quote
+
+    alpha = MOTIF_ALPHA["dark" if t is THEMES["dark"] else "light"]
+    ink = t["ink"]
+    rings = "".join(f'<circle cx="60" cy="300" r="{r}"/>' for r in range(70, 460, 70))
+    radar = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 760"><g fill="none" stroke="{ink}" '
+             f'stroke-opacity="{alpha}" stroke-width="1.5">{rings}'
+             f'<path d="M60 300 L420 120 M60 -100 V700 M-340 300 H460" stroke-dasharray="3 7"/></g></svg>')
+    arcs = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 760"><g fill="none" stroke="{ink}" '
+            f'stroke-opacity="{alpha * 1.25:.3f}" stroke-width="2" stroke-linecap="round" stroke-dasharray="2 10">'
+            f'<path d="M440 720 Q 160 300 -20 380"/><path d="M440 560 Q 230 140 40 250"/>'
+            f'<path d="M440 420 Q 300 40 120 120"/></g></svg>')
+    return ", ".join(f'url("data:image/svg+xml,{quote(svg)}")' for svg in (radar, arcs))
+
+
 def type_color(theme, alert_type):
     return theme["types"].get(alert_type, theme["other"])
 
@@ -75,7 +98,7 @@ def global_css(t):
     --ra-page: {t['page']}; --ra-card: {t['card']}; --ra-surface: {t['surface']}; --ra-border: {t['border']};
     --ra-ink: {t['ink']}; --ra-ink2: {t['ink2']}; --ra-muted: {t['muted']};
     --ra-brand: {t['brand']}; --ra-brand-strong: {t['brand_strong']}; --ra-brand-tint: {t['brand_tint']};
-    --ra-hero: {t['hero']}; --ra-hero-ink: {t['hero_ink']};
+    --ra-hero: {t['hero']}; --ra-hero-ink: {t['hero_ink']}; --ra-axis: {t['axis']};
     --ra-radius: 12px;
     --ra-display: {DISPLAY};
   }}
@@ -124,7 +147,7 @@ def global_css(t):
   }}
   .ra-hero__bg {{ position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }}
   .ra-hero__map {{
-    position: absolute; left: 3%; top: 7%; height: 86%; width: auto; z-index: -1; pointer-events: none;
+    position: absolute; left: 3%; top: -6%; height: 112%; width: auto; z-index: -1; pointer-events: none;
   }}
   /* Siren waves are centered on the siren mark (right side, RTL) */
   .ra-hero__waves {{
@@ -171,6 +194,26 @@ def global_css(t):
   }}
   @keyframes ra-traj {{ from {{ opacity: 0; transform: translate(-36px, 22px); }} }}
   @keyframes ra-traj-in {{ from {{ opacity: 0; transform: translate(36px, 22px); }} }}
+
+  /* ---- Locator: where the selected places are, next to the place picker -------------------- */
+  .ra-locator {{ margin: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }}
+  .ra-locator svg {{ height: 92px; width: auto; display: block; }}
+  .ra-locator figcaption {{
+    font-size: 0.7rem; line-height: 1.3; color: var(--ra-muted); text-align: center; max-width: 9em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }}
+
+  /* ---- Wide screens: faint radar rings and trajectory arcs in the empty margins.
+     The content column gets a solid page background, so the motifs never sit behind charts or text. */
+  @media (min-width: 1500px) {{
+    [data-testid="stMain"] {{
+      background-image: {margin_motifs(t)};
+      background-repeat: no-repeat, no-repeat;
+      background-position: left -40px top 140px, right -30px bottom 60px;
+      background-size: 420px auto, 420px auto;
+    }}
+    .block-container {{ background: var(--ra-page); }}
+  }}
 
   /* ---- Recent barrages feed ------------------------------------------------------------ */
   .ra-feed {{ list-style: none; margin: 0; padding: 0; border: 1px solid var(--ra-border); border-radius: var(--ra-radius);
@@ -252,16 +295,21 @@ def global_css(t):
     .ra-hero {{ padding: 20px 18px 18px; border-radius: 12px; }}
     .ra-hero__brand svg {{ width: 36px; height: 36px; }}
     .ra-hero__sub {{ font-size: 0.85rem; }}
-    .ra-hero__map {{ left: 2%; opacity: 0.6; }}
+    .ra-hero__map {{ left: 2%; opacity: 0.45; }}
     .ra-hero__waves {{ right: -214px; top: -200px; }}
     .ra-hero__meta {{ margin-top: 14px; }}
+    /* The locator needs width the phone does not have; the place names are in the picker anyway */
+    [data-testid="stColumn"]:has(.ra-locator) {{ display: none; }}
   }}
 </style>
 """
 
 
-def hero_html(title, subtitle, chips):
+def hero_html(title, subtitle, chips, dots=None):
     """The page header: red band, siren mark, title and a row of context chips.
+
+    dots: optional list of (x, y) array pairs from map_data.dot_levels (dimmest first). Each locality with
+    alerts in the current selection becomes a white dot on the map outline, brighter with more alerts.
 
     chips: list of (text, kind) where kind is "plain", "ltr" (numbers/dates, isolated LTR) or "status".
     Background motifs (map outline, trajectory arcs, siren waves) are decorative and aria-hidden.
@@ -298,9 +346,16 @@ def hero_html(title, subtitle, chips):
   </g>
 </svg>
 """
+    dot_layers = ""
+    for k, (x, y) in enumerate(dots or []):
+        if len(x):
+            width = 2.0 if k < len(dots) - 1 else 2.6
+            dot_layers += (f'<path d="{dots_path(x, y)}" stroke="#fff" stroke-opacity="{HERO_DOT_ALPHA[k]}" '
+                           f'stroke-width="{width}" stroke-linecap="round" vector-effect="non-scaling-stroke"/>')
+    outline_alpha = 0.14 if dot_layers else 0.22
     israel = (f'<svg class="ra-hero__map" viewBox="0 0 180 460" aria-hidden="true" focusable="false">'
-              f'<path d="{ISRAEL_PATH}" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.22)" '
-              f'stroke-width="1.6" stroke-linejoin="round"/></svg>')
+              f'<path d="{ISRAEL_PATH}" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,{outline_alpha})" '
+              f'stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>{dot_layers}</svg>')
 
     html = f"""
 <header class="ra-hero">
@@ -317,6 +372,34 @@ def hero_html(title, subtitle, chips):
 </header>
 """
     return _flatten(html)
+
+
+HERO_DOT_ALPHA = (0.3, 0.48, 0.68, 0.92)
+
+
+def dots_path(x, y):
+    """One SVG path of zero-length segments: with round caps each segment draws a dot (compact markup)."""
+    return "".join(f"M{a:g} {b:g}h0" for a, b in zip(x, y))
+
+
+def locator_html(all_xy, selected_xy, label):
+    """Small silhouette of Israel made of every locality (gray) with the selected places in brand red."""
+    sel = ""
+    if len(selected_xy[0]):
+        sel = (f'<path d="{dots_path(*selected_xy)}" stroke="var(--ra-brand)" stroke-width="4.5" '
+               f'stroke-linecap="round" vector-effect="non-scaling-stroke"/>')
+    return _flatten(f"""
+<figure class="ra-locator" role="img" aria-label="{escape(label)}">
+<svg viewBox="0 0 180 460" focusable="false" aria-hidden="true">
+<path d="{ISRAEL_PATH}" fill="var(--ra-surface)" stroke="var(--ra-axis)" stroke-width="1" stroke-linejoin="round"
+ vector-effect="non-scaling-stroke"/>
+<path d="{dots_path(*all_xy)}" stroke="var(--ra-axis)" stroke-width="1.4" stroke-linecap="round"
+ vector-effect="non-scaling-stroke"/>
+{sel}
+</svg>
+<figcaption>{escape(label)}</figcaption>
+</figure>
+""")
 
 
 def _flatten(html):

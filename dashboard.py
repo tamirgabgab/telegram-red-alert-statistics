@@ -103,6 +103,51 @@ def notice(title, body):
     st.markdown(ds.notice_html(title, body), unsafe_allow_html=True)
 
 
+@st.cache_resource(show_spinner="טוען את מפת היישובים...")
+def get_geo():
+    polygons, localities = md.load_geo()
+    return polygons, localities, md.build_matcher(localities.index)
+
+
+@st.cache_data
+def city_mapping(cities):
+    return md.map_cities(cities, get_geo()[2])
+
+
+@st.cache_resource
+def dot_base():
+    """Projection of every locality into the outline's viewBox (header dots and locator)."""
+    localities = get_geo()[1]
+    proj = md.dot_projection(localities["lat"], localities["lng"])
+    return proj, md.project(localities["lat"], localities["lng"], proj)
+
+
+def geo_names_of(frame):
+    return frame["city"].map(city_mapping(ALL_CITIES)).dropna()
+
+
+def hero_dots(frame):
+    """Brightness levels of the localities with alerts in ``frame`` (counted in the current mode)."""
+    if frame.empty:
+        return None
+    dfg = frame.assign(geo=geo_names_of(frame)).dropna(subset=["geo"])
+    counts = md.counts_by_locality(dfg, mode, sorted(dfg["alert_type"].unique())).sum(axis=1)
+    return md.dot_levels(counts, get_geo()[1], dot_base()[0])
+
+
+def locator(zones, cities):
+    """Locator figure: all localities in gray, the picked zones and localities in red."""
+    picked = alerts[alerts["zone"].isin(zones) | alerts["city"].isin(cities)].drop_duplicates("city")
+    selected = md.dot_points(geo_names_of(picked), get_geo()[1], dot_base()[0])
+    if not (zones or cities):
+        label = "כל הארץ"
+    elif len(zones) + len(cities) == 1:
+        label = (zones or cities)[0]
+    else:
+        label = f"{len(zones) + len(cities)} מקומות"
+    return ds.locator_html(dot_base()[1], selected, label)
+
+
 TITLE = "סטטיסטיקת התרעות"
 SUBTITLE = "נתוני התרעות פיקוד העורף מערוץ הטלגרם \"צופר - צבע אדום\""
 
@@ -127,6 +172,7 @@ UNITS = {dd.MODE_LOCALITIES: "התרעות ביישובים", dd.MODE_EVENTS: "�
 ALL_TIME, CUSTOM = "הכל", "מותאם"
 PRESETS = {ALL_TIME: None, "7 ימים": 7, "30 ימים": 30, "90 ימים": 90, CUSTOM: "custom"}
 CITY_ZONE = dd.city_zones(alerts)
+ALL_CITIES = tuple(sorted(alerts["city"].unique()))
 
 
 def place_label(key):
@@ -184,14 +230,14 @@ chips = []
 if mode != dd.MODE_LOCALITIES:
     chips.append((f"ספירה לפי {mode_label}", "plain"))
 chips.append((f"הנתונים מעודכנים עד {data_until:%d/%m/%Y %H:%M}", "status"))
-st.markdown(ds.hero_html(TITLE, SUBTITLE, chips), unsafe_allow_html=True)
+hero_slot = st.empty()  # filled once the selection is known (the dots follow it)
 
 # --- Selection bar ---------------------------------------------------------------------
 zone_keys = [f"z|{z}" for z in sorted(alerts["zone"].unique()) if z]
 city_keys = [f"c|{c}" for c in sorted(alerts["city"].unique()) if c]
 present_types = [t for t in TYPE_ORDER if t in set(alerts["alert_type"])]
 with st.container(key="filterbar"):
-    c_place, c_type, c_period = st.columns([1.9, 1.1, 3], vertical_alignment="bottom")
+    c_place, c_type, c_period, c_locator = st.columns([1.9, 1.1, 3, 0.45], vertical_alignment="bottom")
     with c_place:
         place_sel = st.multiselect("אזור או יישוב", zone_keys + city_keys, key="place_sel", format_func=place_label,
                                    placeholder="כל הארץ (הקלידו לחיפוש)")
@@ -210,6 +256,8 @@ picked = st.session_state["date_range"]
 start, end = (picked[0], picked[1]) if isinstance(picked, (list, tuple)) and len(picked) == 2 else (data_min, data_max)
 zones = [k.split("|", 1)[1] for k in place_sel if k.startswith("z|")]
 cities = [k.split("|", 1)[1] for k in place_sel if k.startswith("c|")]
+with c_locator:
+    st.markdown(locator(zones, cities), unsafe_allow_html=True)
 filtered = bool(place_sel or types) or (start, end) != (data_min, data_max)
 if filtered:
     st.button("ניקוי בחירה", on_click=reset_filters, key="reset_top", type="tertiary",
@@ -217,6 +265,7 @@ if filtered:
 
 df = dd.filter_places(dd.filter_alerts(alerts, start, end, types), zones, cities)
 unit = UNITS[mode]
+hero_slot.markdown(ds.hero_html(TITLE, SUBTITLE, chips, dots=hero_dots(df)), unsafe_allow_html=True)
 
 if df.empty:
     notice("אין התרעות שמתאימות לבחירה", "אפשר להרחיב את התקופה, או להסיר חלק מהסוגים, האזורים והיישובים.")
@@ -353,17 +402,6 @@ with tab_recent:
 # Base map tiles (no API key). Set MAP_STYLE=white-bg to use the map without internet tiles.
 MAP_STYLE = {"light": "carto-positron", "dark": "carto-darkmatter"}
 MAP_ZERO = {"light": "#DDE0E4", "dark": "#2F333B"}  # "no alerts" fill, neutral gray
-
-
-@st.cache_resource(show_spinner="טוען את מפת היישובים...")
-def get_geo():
-    polygons, localities = md.load_geo()
-    return polygons, localities, md.build_matcher(localities.index)
-
-
-@st.cache_data
-def city_mapping(cities):
-    return md.map_cities(cities, get_geo()[2])
 
 
 def layer_ramp(alert_type):
@@ -521,7 +559,7 @@ def locality_details(geo_name, dfg, layers, localities):
 with tab_map:
     if tab_is_open(tab_map):
         polygons, localities, _ = get_geo()
-        mapping = city_mapping(tuple(sorted(alerts["city"].unique())))
+        mapping = city_mapping(ALL_CITIES)
         dfg, unmatched = md.attach_geo(df, mapping)
 
         present = [t for t in TYPE_ORDER if t in set(df["alert_type"])]
