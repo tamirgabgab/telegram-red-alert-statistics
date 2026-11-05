@@ -101,3 +101,26 @@ def test_last_alert():
     last = dd.last_alert(gaza)
     assert last["localities"] == 3 and last["place"] == "עוטף עזה"
     assert dd.last_alert(df.iloc[0:0]) is None
+
+
+def test_barrages_group_close_minutes_per_type():
+    df = make_df()
+    ids = dd.barrage_ids(df)
+    # 12:53 and 12:56 UAV are 3 minutes apart -> one barrage; rocket 12:55 is its own (other type)
+    assert ids.nunique() == 3
+    assert dd.kpis(df, dd.MODE_BARRAGES)["total"] == 3
+    assert dd.barrage_ids(df, gap_minutes=2).nunique() == 4
+
+
+def test_barrage_table_and_top_counts():
+    df = make_df()
+    t = dd.barrage_table(df)
+    assert list(t["start"]) == sorted(t["start"], reverse=True)
+    uav = t[t["alert_type"] == "uav"].iloc[0]
+    assert uav["start"] == pd.Timestamp("2026-06-17 12:53") and uav["end"] == pd.Timestamp("2026-06-17 12:56")
+    assert uav["localities"] == 1 and uav["zones"] == ["קו העימות"]
+    gaza = t[t["alert_type"] == "rocket"].iloc[-1]
+    assert gaza["localities"] == 3
+    # in barrage mode a locality hit twice in one barrage counts once
+    assert dd.top_counts(df, "city", mode=dd.MODE_BARRAGES)["זרעית"] == 1
+    assert dd.barrage_table(df.iloc[0:0]).empty

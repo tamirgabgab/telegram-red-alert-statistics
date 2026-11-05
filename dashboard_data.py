@@ -10,6 +10,8 @@ from alerts_parser import ALERT_TYPE_LABELS
 # Count modes
 MODE_LOCALITIES = "localities"  # every locality that sounded counts (one row per locality per minute)
 MODE_EVENTS = "events"          # one alert event per (minute, alert type), no matter how many localities
+MODE_BARRAGES = "barrages"      # one per wave: same-type alert minutes no more than BARRAGE_GAP_MIN apart
+BARRAGE_GAP_MIN = 3
 
 # Time resolutions for the time series: label -> pandas offset
 RESOLUTIONS = {
@@ -47,11 +49,51 @@ def filter_alerts(df, start=None, end=None, types=None, zones=None, cities=None)
     return df[mask]
 
 
+def barrage_ids(df, gap_minutes=BARRAGE_GAP_MIN):
+    """Barrage number for every row.
+
+    Alert minutes of the same type that follow each other by at most ``gap_minutes`` belong to one
+    barrage (a chain can therefore last longer than the gap). Computed on the rows given, so a
+    zone/city filter yields the barrages as seen in that area.
+    """
+    if df.empty:
+        return pd.Series(dtype="int64", index=df.index)
+    ev = df[["alert_type", "timestamp"]].drop_duplicates().sort_values(["alert_type", "timestamp"])
+    new = (ev["alert_type"] != ev["alert_type"].shift()) | (ev["timestamp"].diff() > pd.Timedelta(minutes=gap_minutes))
+    ids = pd.Series(new.cumsum().to_numpy(), index=pd.MultiIndex.from_frame(ev))
+    keys = pd.MultiIndex.from_frame(df[["alert_type", "timestamp"]])
+    return pd.Series(ids.reindex(keys).to_numpy(), index=df.index, name="barrage")
+
+
 def apply_mode(df, mode, extra_keys=()):
-    """In events mode collapse rows to one per (timestamp, alert_type[, extra keys])."""
+    """Collapse rows to the counting unit of the mode.
+
+    events: one row per (timestamp, alert_type[, extra keys]).
+    barrages: one row per (barrage[, extra keys]), stamped with the barrage's first minute.
+    """
     if mode == MODE_EVENTS:
         return df.drop_duplicates(subset=["timestamp", "alert_type", *extra_keys])
+    if mode == MODE_BARRAGES:
+        d = df.assign(barrage=barrage_ids(df)).sort_values("timestamp")
+        return d.drop_duplicates(subset=["barrage", *extra_keys])
     return df
+
+
+def barrage_table(df, gap_minutes=BARRAGE_GAP_MIN):
+    """One row per barrage, newest first: start, end, alert_type, localities, zones (most localities first)."""
+    cols = ["start", "end", "alert_type", "localities", "zones"]
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    d = df.assign(barrage=barrage_ids(df, gap_minutes))
+    g = d.groupby("barrage")
+    out = pd.DataFrame({
+        "start": g["timestamp"].min(),
+        "end": g["timestamp"].max(),
+        "alert_type": g["alert_type"].first(),
+        "localities": g["city"].nunique(),
+        "zones": g["zone"].agg(lambda z: list(z.value_counts().index)),
+    })
+    return out.sort_values("start", ascending=False).reset_index(drop=True)[cols]
 
 
 def effective_resolution(df, freq):
@@ -127,8 +169,8 @@ def hour_minute_matrix(df, minute_bin=10, mode=MODE_LOCALITIES):
 
 def top_counts(df, level, n=20, mode=MODE_LOCALITIES):
     """Top-n zones or cities. In events mode a zone counts each (minute, type) once."""
-    if level == "zone":
-        d = apply_mode(df, mode, extra_keys=("zone",))
+    if level == "zone" or mode == MODE_BARRAGES:
+        d = apply_mode(df, mode, extra_keys=(level,))
     else:
         d = df
     return d[level].value_counts().head(n)
